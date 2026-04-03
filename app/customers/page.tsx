@@ -64,7 +64,9 @@ const usStates = [
 
 type CustomerRecord = {
   id: string;
-  name: string;
+  name: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
   phone: string | null;
   email: string | null;
   address: string | null;
@@ -170,6 +172,15 @@ function formatAddress(customer: CustomerRecord) {
   return [customer.address, customer.city, customer.state, customer.zip]
     .filter(Boolean)
     .join(", ");
+}
+
+function getCustomerName(customer: CustomerRecord) {
+  const fullNameFromParts = [customer.first_name, customer.last_name]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+
+  return customer.name?.trim() || fullNameFromParts || "Unnamed Customer";
 }
 
 function getInitials(name: string) {
@@ -443,7 +454,7 @@ export default function CustomersPage() {
     const [customersResponse, quotesResponse] = await Promise.all([
       supabase
         .from("customers")
-        .select("id, name, phone, email, address, city, state, zip, type, notes, created_at")
+        .select("*")
         .order("created_at", { ascending: false }),
       supabase
         .from("quotes")
@@ -496,7 +507,7 @@ export default function CustomersPage() {
       const matchesSearch =
         term.length === 0
           ? true
-          : customer.name.toLowerCase().includes(term) ||
+          : getCustomerName(customer).toLowerCase().includes(term) ||
             (customer.phone ?? "").toLowerCase().includes(term) ||
             (customer.email ?? "").toLowerCase().includes(term);
 
@@ -539,7 +550,7 @@ export default function CustomersPage() {
   function openEditDrawer(customer: CustomerRecord) {
     setDrawerMode("edit");
     setForm({
-      name: customer.name,
+      name: getCustomerName(customer),
       phone: customer.phone ?? "",
       email: customer.email ?? "",
       address: customer.address ?? "",
@@ -697,7 +708,7 @@ export default function CustomersPage() {
                           }`}
                         >
                           <td className="px-4 py-4 font-medium text-stone-950">
-                            {customer.name}
+                            {getCustomerName(customer)}
                           </td>
                           <td className="px-4 py-4 text-sm text-stone-500">
                             {customer.phone || "—"}
@@ -730,11 +741,11 @@ export default function CustomersPage() {
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-center gap-4">
                       <div className="flex h-14 w-14 items-center justify-center rounded-full bg-stone-100 text-sm font-semibold text-stone-600">
-                        {getInitials(selectedCustomer.name)}
+                        {getInitials(getCustomerName(selectedCustomer))}
                       </div>
                       <div>
                         <h2 className="text-xl font-semibold tracking-tight text-stone-950">
-                          {selectedCustomer.name}
+                          {getCustomerName(selectedCustomer)}
                         </h2>
                         <div className="mt-2">
                           <Badge

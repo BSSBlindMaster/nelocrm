@@ -17,7 +17,7 @@ type SidebarProps = {
 
 export function Sidebar({ current }: SidebarProps) {
   return (
-    <aside className="flex h-screen w-64 flex-col bg-[#1C1C1C] px-5 py-6 text-white">
+    <aside className="flex h-screen w-[240px] min-w-[240px] shrink-0 flex-col bg-[#1C1C1C] px-5 py-6 text-white">
       <Link href="/dashboard" className="flex items-center gap-2 p-4">
         <span className="inline-flex h-[18px] w-6 items-center justify-center text-[#FF4900]">
           <svg
