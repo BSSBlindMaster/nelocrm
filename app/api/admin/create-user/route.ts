@@ -5,11 +5,11 @@ export async function POST(request: Request) {
   const { email, firstName, lastName, roleId, location, phone } = await request.json();
 
   const { data: authUser, error: authError } =
-    await supabaseAdmin.auth.admin.createUser({
-      email,
-      password: "Welcome2Nelo!",
-      email_confirm: true,
-      user_metadata: { first_name: firstName, last_name: lastName },
+    await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
+      data: {
+        first_name: firstName,
+        last_name: lastName,
+      },
     });
 
   if (authError) {
@@ -35,5 +35,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: userError.message }, { status: 400 });
   }
 
-  return NextResponse.json({ success: true, userId: authUser.user.id, appUserId: appUser.id });
+  return NextResponse.json({
+    success: true,
+    message: "Invitation sent to " + email,
+    userId: authUser.user.id,
+    appUserId: appUser.id,
+  });
 }

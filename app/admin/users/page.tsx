@@ -285,6 +285,7 @@ export default function AdminUsersPage() {
       const result = (await response.json()) as {
         error?: string;
         success?: boolean;
+        message?: string;
         userId?: string;
         appUserId?: string;
       };
@@ -305,7 +306,9 @@ export default function AdminUsersPage() {
         await supabase.from("user_permission_overrides").insert(overrideEntries);
       }
 
-      setMessage("User created — they will receive a login email");
+      setMessage(
+        `Invitation sent to ${form.email} — they will receive an email to set their password and log in.`,
+      );
       setIsDrawerOpen(false);
       await loadData(result.appUserId);
     } else if (selectedUser) {
