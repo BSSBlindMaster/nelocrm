@@ -1,14 +1,12 @@
 insert into manufacturers (name, active)
 values ('Hunter Douglas', true)
-on conflict (name) do update
-set active = excluded.active;
+on conflict do nothing;
 
 insert into products (manufacturer_id, name, active)
 select m.id, 'Duette® Honeycomb Shades', true
 from manufacturers m
 where m.name = 'Hunter Douglas'
-on conflict (manufacturer_id, name) do update
-set active = excluded.active;
+on conflict do nothing;
 
 insert into price_grid_codes (manufacturer_id, code, description)
 select m.id, v.code, v.description
@@ -29,9 +27,7 @@ cross join (
     ('DU-RD6', 'Room Darkening Luxury')
 ) as v(code, description)
 where m.name = 'Hunter Douglas'
-on conflict (code) do update
-set manufacturer_id = excluded.manufacturer_id,
-    description = excluded.description;
+on conflict do nothing;
 
 insert into fabrics (product_id, name, fabric_code, pleat_size, opacity, price_grid_code)
 select p.id, v.name, v.fabric_code, v.pleat_size, v.opacity, v.price_grid_code
@@ -92,12 +88,7 @@ cross join (
 ) as v(name, fabric_code, pleat_size, opacity, price_grid_code)
 where m.name = 'Hunter Douglas'
   and p.name = 'Duette® Honeycomb Shades'
-on conflict (fabric_code) do update
-set product_id = excluded.product_id,
-    name = excluded.name,
-    pleat_size = excluded.pleat_size,
-    opacity = excluded.opacity,
-    price_grid_code = excluded.price_grid_code;
+on conflict do nothing;
 
 insert into lift_options (product_id, name, surcharge_type, surcharge_value)
 select p.id, v.name, v.surcharge_type, v.surcharge_value
@@ -114,9 +105,7 @@ cross join (
 ) as v(name, surcharge_type, surcharge_value)
 where m.name = 'Hunter Douglas'
   and p.name = 'Duette® Honeycomb Shades'
-on conflict (product_id, name) do update
-set surcharge_type = excluded.surcharge_type,
-    surcharge_value = excluded.surcharge_value;
+on conflict do nothing;
 
 insert into design_options (product_id, name, surcharge)
 select p.id, v.name, v.surcharge
@@ -130,8 +119,7 @@ cross join (
 ) as v(name, surcharge)
 where m.name = 'Hunter Douglas'
   and p.name = 'Duette® Honeycomb Shades'
-on conflict (product_id, name) do update
-set surcharge = excluded.surcharge;
+on conflict do nothing;
 
 -- DU-LF1 price grid rows are intentionally left as a placeholder because the
 -- exact width/height/MSRP matrix is referenced from a previous prompt but is
