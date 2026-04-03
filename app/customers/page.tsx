@@ -1,11 +1,18 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/Badge";
 import { Sidebar } from "@/components/Sidebar";
 import { Topbar } from "@/components/Topbar";
+import { MAPBOX_TOKEN } from "@/lib/mapbox";
 import { supabase } from "@/lib/supabase";
+
+const AddressAutofill = dynamic(
+  () => import("@mapbox/search-js-react").then((module) => module.AddressAutofill),
+  { ssr: false },
+);
 
 const filters = ["All", "Customers", "Leads", "VIP"] as const;
 
@@ -248,26 +255,70 @@ function buildStatsMap(quotes: QuoteRecord[]) {
   }, {});
 }
 
+function getAutofillValue(source: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = source[key];
+
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
 function CustomerFormDrawer({
   isOpen,
   mode,
   form,
   isSaving,
+  isDeleting,
+  isConfirmingDelete,
   onChange,
   onCancel,
   onSave,
+  onDelete,
+  onDeleteCancel,
 }: {
   isOpen: boolean;
   mode: "create" | "edit";
   form: CustomerFormState;
   isSaving: boolean;
+  isDeleting: boolean;
+  isConfirmingDelete: boolean;
   onChange: <Key extends keyof CustomerFormState>(
     key: Key,
     value: CustomerFormState[Key],
   ) => void;
   onCancel: () => void;
   onSave: () => void;
+  onDelete: () => void;
+  onDeleteCancel: () => void;
 }) {
+  function handleRetrieve(result: unknown) {
+    const feature = (result as { features?: Array<{ properties?: Record<string, unknown> }> })
+      ?.features?.[0];
+    const properties = feature?.properties ?? {};
+
+    onChange(
+      "address",
+      getAutofillValue(properties, ["address_line1", "address_line1_text", "address"])
+        || form.address,
+    );
+    onChange(
+      "city",
+      getAutofillValue(properties, ["address_level2", "place", "city"]) || form.city,
+    );
+    onChange(
+      "state",
+      getAutofillValue(properties, ["address_level1", "region_code", "region"]) || form.state,
+    );
+    onChange(
+      "zip",
+      getAutofillValue(properties, ["postal_code", "postcode"]) || form.zip,
+    );
+  }
+
   return (
     <aside
       className={`fixed inset-y-0 right-0 z-30 w-full max-w-md border-l border-stone-200 bg-white shadow-2xl transition-transform duration-300 ${
@@ -282,7 +333,7 @@ function CustomerFormDrawer({
                 Customer
               </p>
               <h2 className="mt-2 text-xl font-semibold tracking-tight text-stone-950">
-                {mode === "create" ? "Add Customer" : "Edit Customer"}
+                {mode === "create" ? "Add customer" : "Edit customer"}
               </h2>
             </div>
             <button
@@ -336,12 +387,15 @@ function CustomerFormDrawer({
             <label className="mb-2 block text-sm font-medium text-stone-700">
               Street address
             </label>
-            <input
-              type="text"
-              value={form.address}
-              onChange={(event) => onChange("address", event.target.value)}
-              className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
-            />
+            <AddressAutofill accessToken={MAPBOX_TOKEN} onRetrieve={handleRetrieve}>
+              <input
+                type="text"
+                autoComplete="address-line1"
+                value={form.address}
+                onChange={(event) => onChange("address", event.target.value)}
+                className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+              />
+            </AddressAutofill>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
@@ -349,6 +403,7 @@ function CustomerFormDrawer({
               <label className="mb-2 block text-sm font-medium text-stone-700">City</label>
               <input
                 type="text"
+                autoComplete="address-level2"
                 value={form.city}
                 onChange={(event) => onChange("city", event.target.value)}
                 className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
@@ -358,6 +413,7 @@ function CustomerFormDrawer({
             <div>
               <label className="mb-2 block text-sm font-medium text-stone-700">State</label>
               <select
+                autoComplete="address-level1"
                 value={form.state}
                 onChange={(event) => onChange("state", event.target.value)}
                 className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
@@ -376,6 +432,7 @@ function CustomerFormDrawer({
             <label className="mb-2 block text-sm font-medium text-stone-700">Zip code</label>
             <input
               type="text"
+              autoComplete="postal-code"
               value={form.zip}
               onChange={(event) => onChange("zip", event.target.value)}
               className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
@@ -411,6 +468,43 @@ function CustomerFormDrawer({
         </div>
 
         <div className="border-t border-stone-200 px-6 py-5">
+          {mode === "edit" ? (
+            <div className="mb-4">
+              {isConfirmingDelete ? (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
+                  <p className="text-sm text-rose-700">
+                    Are you sure? This cannot be undone
+                  </p>
+                  <div className="mt-3 flex gap-3">
+                    <button
+                      type="button"
+                      onClick={onDelete}
+                      disabled={isDeleting}
+                      className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      {isDeleting ? "Deleting..." : "Yes, delete"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onDeleteCancel}
+                      className="rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 transition hover:border-stone-300"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onDelete}
+                  className="text-sm text-rose-600 transition hover:text-rose-700"
+                >
+                  Delete customer
+                </button>
+              )}
+            </div>
+          ) : null}
+
           <div className="flex gap-3">
             <button
               type="button"
@@ -446,6 +540,8 @@ export default function CustomersPage() {
   const [drawerMode, setDrawerMode] = useState<"create" | "edit">("create");
   const [form, setForm] = useState<CustomerFormState>(emptyForm);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
 
   async function loadCustomersAndQuotes(selectCustomerId?: string | null) {
     setIsLoading(true);
@@ -544,6 +640,7 @@ export default function CustomersPage() {
   function openCreateDrawer() {
     setDrawerMode("create");
     setForm(emptyForm);
+    setIsConfirmingDelete(false);
     setIsDrawerOpen(true);
   }
 
@@ -566,6 +663,7 @@ export default function CustomersPage() {
       notes: customer.notes ?? "",
     });
     setSelectedCustomerId(customer.id);
+    setIsConfirmingDelete(false);
     setIsDrawerOpen(true);
   }
 
@@ -596,6 +694,7 @@ export default function CustomersPage() {
       if (!error && data) {
         await loadCustomersAndQuotes(data.id);
         setIsDrawerOpen(false);
+        setIsConfirmingDelete(false);
       }
     } else if (selectedCustomerId) {
       const { error } = await supabase
@@ -616,10 +715,36 @@ export default function CustomersPage() {
       if (!error) {
         await loadCustomersAndQuotes(selectedCustomerId);
         setIsDrawerOpen(false);
+        setIsConfirmingDelete(false);
       }
     }
 
     setIsSaving(false);
+  }
+
+  async function handleDeleteCustomer() {
+    if (drawerMode !== "edit" || !selectedCustomerId) {
+      return;
+    }
+
+    if (!isConfirmingDelete) {
+      setIsConfirmingDelete(true);
+      return;
+    }
+
+    setIsDeleting(true);
+
+    const { error } = await supabase.from("customers").delete().eq("id", selectedCustomerId);
+
+    if (!error) {
+      const remainingCustomers = customers.filter((customer) => customer.id !== selectedCustomerId);
+      setIsDrawerOpen(false);
+      setIsConfirmingDelete(false);
+      setSelectedCustomerId(remainingCustomers[0]?.id ?? null);
+      await loadCustomersAndQuotes(remainingCustomers[0]?.id ?? null);
+    }
+
+    setIsDeleting(false);
   }
 
   return (
@@ -702,7 +827,7 @@ export default function CustomersPage() {
                       return (
                         <tr
                           key={customer.id}
-                          onClick={() => setSelectedCustomerId(customer.id)}
+                          onClick={() => openEditDrawer(customer)}
                           className={`cursor-pointer transition ${
                             isSelected ? "bg-primary/5" : "hover:bg-stone-50"
                           }`}
@@ -733,125 +858,6 @@ export default function CustomersPage() {
               )}
             </div>
           </div>
-
-          <aside className="hidden w-[380px] shrink-0 rounded-2xl border border-stone-200 bg-white p-6 shadow-sm xl:block">
-            {selectedCustomer ? (
-              <>
-                <div className="border-b border-stone-200 pb-5">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex items-center gap-4">
-                      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-stone-100 text-sm font-semibold text-stone-600">
-                        {getInitials(getCustomerName(selectedCustomer))}
-                      </div>
-                      <div>
-                        <h2 className="text-xl font-semibold tracking-tight text-stone-950">
-                          {getCustomerName(selectedCustomer)}
-                        </h2>
-                        <div className="mt-2">
-                          <Badge
-                            label={getBadgeLabel(selectedCustomer.type)}
-                            tone={getTone(selectedCustomer.type)}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-5 space-y-3 text-sm text-stone-600">
-                    <p>{selectedCustomer.phone || "No phone on file"}</p>
-                    <p>{selectedCustomer.email || "No email on file"}</p>
-                    <p>{formatAddress(selectedCustomer) || "No address on file"}</p>
-                  </div>
-                </div>
-
-                <div className="mt-6 grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
-                  <div className="rounded-2xl border border-stone-100 bg-stone-50 px-4 py-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-400">
-                      Total Quotes
-                    </p>
-                    <p className="mt-2 text-xl font-semibold tracking-tight text-stone-950">
-                      {selectedStats?.totalQuotes ?? 0}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-stone-100 bg-stone-50 px-4 py-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-400">
-                      Total Orders
-                    </p>
-                    <p className="mt-2 text-xl font-semibold tracking-tight text-stone-950">
-                      {selectedStats?.totalOrders ?? 0}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-stone-100 bg-stone-50 px-4 py-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-400">
-                      Lifetime Value
-                    </p>
-                    <p className="mt-2 text-xl font-semibold tracking-tight text-stone-950">
-                      {formatCurrency(selectedStats?.lifetimeValue ?? 0)}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-6">
-                  <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-stone-400">
-                    Notes
-                  </h3>
-                  <p className="mt-3 text-sm leading-6 text-stone-600">
-                    {selectedCustomer.notes || "No notes yet."}
-                  </p>
-                </div>
-
-                <div className="mt-6">
-                  <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-stone-400">
-                    Recent Activity
-                  </h3>
-                  <div className="mt-3 space-y-3">
-                    {selectedStats && selectedStats.recentQuotes.length > 0 ? (
-                      selectedStats.recentQuotes.map((quote) => (
-                        <div
-                          key={quote.id}
-                          className="rounded-2xl border border-stone-100 bg-stone-50 px-4 py-4 text-sm text-stone-600"
-                        >
-                          <p className="font-medium text-stone-950">
-                            {getBadgeLabel(quote.status ?? "customer")} quote
-                          </p>
-                          <p className="mt-1">
-                            {formatCurrency(Number(quote.total ?? 0))} •{" "}
-                            {formatRelativeLabel(quote.created_at)}
-                          </p>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="rounded-2xl border border-stone-100 bg-stone-50 px-4 py-4 text-sm text-stone-500">
-                        No quote activity yet.
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="mt-6 flex gap-3">
-                  <button
-                    type="button"
-                    onClick={() => openEditDrawer(selectedCustomer)}
-                    className="rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-95"
-                  >
-                    Edit
-                  </button>
-                  <Link
-                    href="/quotes/new"
-                    className="rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 transition hover:border-stone-300"
-                  >
-                    New Quote
-                  </Link>
-                </div>
-              </>
-            ) : (
-              <div className="flex h-full items-center justify-center text-sm text-stone-400">
-                Select a customer to view details.
-              </div>
-            )}
-          </aside>
         </div>
       </section>
 
@@ -860,9 +866,16 @@ export default function CustomersPage() {
         mode={drawerMode}
         form={form}
         isSaving={isSaving}
+        isDeleting={isDeleting}
+        isConfirmingDelete={isConfirmingDelete}
         onChange={updateForm}
-        onCancel={() => setIsDrawerOpen(false)}
+        onCancel={() => {
+          setIsDrawerOpen(false);
+          setIsConfirmingDelete(false);
+        }}
         onSave={() => void handleSaveCustomer()}
+        onDelete={() => void handleDeleteCustomer()}
+        onDeleteCancel={() => setIsConfirmingDelete(false)}
       />
     </main>
   );
