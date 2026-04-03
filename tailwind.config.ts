@@ -10,6 +10,7 @@ const config: Config = {
     extend: {
       colors: {
         primary: "#FF4900",
+        sidebar: "#1C1C1C",
       },
       fontFamily: {
         sans: [
