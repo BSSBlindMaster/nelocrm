@@ -14,6 +14,55 @@ type NavItem = {
   href: string;
 };
 
+type AppUserLookup = {
+  role_id: string | null;
+  roles?: {
+    name: string | null;
+  } | null;
+};
+
+const ALL_PERMISSION_KEYS = [
+  "customers.view_all",
+  "customers.view_own",
+  "customers.view",
+  "quotes.view_all",
+  "quotes.view_own",
+  "quotes.view",
+  "orders.view_all",
+  "orders.manage",
+  "calendar.view",
+  "dispatch.view",
+  "dispatch.manage",
+  "reports.sales",
+  "reports.marketing",
+  "reports.financial",
+  "reports.install",
+  "reporting.view",
+  "kpi.view_team",
+  "kpi.view_all",
+  "admin.users",
+  "admin.roles",
+  "admin.settings",
+  "admin.catalog",
+  "admin.marketing_spend",
+];
+
+function hasAnyPermission(userPerms: string[], keys: string[]) {
+  return keys.some((key) => hasPermission(userPerms, key));
+}
+
+function isCurrent(item: NavItem, current: string) {
+  if (item.label === current) {
+    return true;
+  }
+
+  if (item.label === "Roles & permissions" && current === "Roles") {
+    return true;
+  }
+
+  return false;
+}
+
 function NavLink({
   item,
   current,
@@ -21,7 +70,7 @@ function NavLink({
   item: NavItem;
   current: string;
 }) {
-  const isActive = item.label === current;
+  const isActive = isCurrent(item, current);
 
   return (
     <Link
@@ -37,26 +86,104 @@ function NavLink({
   );
 }
 
+function Section({
+  title,
+  items,
+  current,
+}: {
+  title: string;
+  items: NavItem[];
+  current: string;
+}) {
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="pt-6">
+      <p className="px-3 pb-3 text-xs font-semibold uppercase tracking-[0.2em] text-white/35">
+        {title}
+      </p>
+      <div className="flex flex-col gap-1">
+        {items.map((item) => (
+          <NavLink key={item.label} item={item} current={current} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function Sidebar({ current }: SidebarProps) {
   const [userPermissions, setUserPermissions] = useState<string[]>([]);
   const [isLoadingPermissions, setIsLoadingPermissions] = useState(true);
+  const [showAllNav, setShowAllNav] = useState(false);
+  const [isOwnerRole, setIsOwnerRole] = useState(false);
+  const [isAdminOpen, setIsAdminOpen] = useState(
+    current === "Settings" ||
+      current === "Users" ||
+      current === "Roles" ||
+      current === "Roles & permissions",
+  );
 
   useEffect(() => {
     let isMounted = true;
 
-    async function loadPermissions() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user || !isMounted) {
-        if (isMounted) {
-          setIsLoadingPermissions(false);
-        }
+    const timeoutId = window.setTimeout(() => {
+      if (!isMounted) {
         return;
       }
 
-      const permissions = await getUserPermissions(user.id);
+      setShowAllNav(true);
+      setIsLoadingPermissions(false);
+    }, 500);
+
+    async function loadPermissions() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!isMounted) {
+        return;
+      }
+
+      const authUserId = session?.user?.id;
+
+      if (!authUserId) {
+        setShowAllNav(true);
+        setIsLoadingPermissions(false);
+        window.clearTimeout(timeoutId);
+        return;
+      }
+
+      const { data: appUser } = await supabase
+        .from("app_users")
+        .select("role_id, roles(name)")
+        .eq("auth_user_id", authUserId)
+        .maybeSingle();
+
+      if (!isMounted) {
+        return;
+      }
+
+      const resolvedUser = appUser as AppUserLookup | null;
+
+      if (!resolvedUser) {
+        setShowAllNav(true);
+        setIsLoadingPermissions(false);
+        window.clearTimeout(timeoutId);
+        return;
+      }
+
+      if (resolvedUser.roles?.name === "Owner") {
+        setIsOwnerRole(true);
+        setShowAllNav(true);
+        setIsAdminOpen(true);
+        setIsLoadingPermissions(false);
+        window.clearTimeout(timeoutId);
+        return;
+      }
+
+      const permissions = await getUserPermissions(authUserId);
 
       if (!isMounted) {
         return;
@@ -64,101 +191,139 @@ export function Sidebar({ current }: SidebarProps) {
 
       setUserPermissions(permissions);
       setIsLoadingPermissions(false);
+      window.clearTimeout(timeoutId);
     }
 
     void loadPermissions();
 
     return () => {
       isMounted = false;
+      window.clearTimeout(timeoutId);
     };
-  }, []);
+  }, [current]);
 
-  const mainItems = useMemo(() => {
-    const items: NavItem[] = [{ label: "Dashboard", href: "/dashboard" }];
+  const effectivePermissions = useMemo(() => {
+    if (showAllNav || isOwnerRole) {
+      return ALL_PERMISSION_KEYS;
+    }
+
+    return userPermissions;
+  }, [isOwnerRole, showAllNav, userPermissions]);
+
+  const dashboardItems = useMemo(
+    () => [{ label: "Dashboard", href: "/dashboard" }] satisfies NavItem[],
+    [],
+  );
+
+  const workItems = useMemo(() => {
+    const items: NavItem[] = [];
 
     if (
-      hasPermission(userPermissions, "customers.view_all") ||
-      hasPermission(userPermissions, "customers.view_own")
+      hasAnyPermission(effectivePermissions, [
+        "customers.view_all",
+        "customers.view_own",
+        "customers.view",
+      ])
     ) {
       items.push({ label: "Customers", href: "/customers" });
     }
 
     if (
-      hasPermission(userPermissions, "quotes.view_own") ||
-      hasPermission(userPermissions, "quotes.view_all")
+      hasAnyPermission(effectivePermissions, [
+        "quotes.view_all",
+        "quotes.view_own",
+        "quotes.view",
+      ])
     ) {
       items.push({ label: "Quotes", href: "/quotes" });
     }
 
-    if (hasPermission(userPermissions, "orders.view_all")) {
+    if (
+      hasAnyPermission(effectivePermissions, [
+        "orders.view_all",
+        "orders.manage",
+      ])
+    ) {
       items.push({ label: "Orders", href: "/orders" });
     }
 
-    if (
-      hasPermission(userPermissions, "dispatch.view") ||
-      hasPermission(userPermissions, "dispatch.manage")
-    ) {
-      items.push({ label: "Dispatch", href: "/dispatch" });
-    }
-
-    if (hasPermission(userPermissions, "calendar.view")) {
+    if (hasPermission(effectivePermissions, "calendar.view")) {
       items.push({ label: "Calendar", href: "/calendar" });
     }
 
     if (
-      hasPermission(userPermissions, "reports.sales") ||
-      hasPermission(userPermissions, "reports.marketing") ||
-      hasPermission(userPermissions, "reports.financial") ||
-      hasPermission(userPermissions, "reports.install")
+      hasAnyPermission(effectivePermissions, [
+        "dispatch.view",
+        "dispatch.manage",
+      ])
+    ) {
+      items.push({ label: "Dispatch", href: "/dispatch" });
+    }
+
+    return items;
+  }, [effectivePermissions]);
+
+  const reportItems = useMemo(() => {
+    const items: NavItem[] = [];
+
+    if (
+      hasAnyPermission(effectivePermissions, [
+        "reports.sales",
+        "reports.marketing",
+        "reports.financial",
+        "reports.install",
+        "reporting.view",
+      ])
     ) {
       items.push({ label: "Reports", href: "/reports" });
     }
 
+    if (
+      hasAnyPermission(effectivePermissions, [
+        "kpi.view_team",
+        "kpi.view_all",
+      ])
+    ) {
+      items.push({ label: "KPIs", href: "/team/kpis" });
+    }
+
     return items;
-  }, [userPermissions]);
+  }, [effectivePermissions]);
 
   const adminItems = useMemo(() => {
     const items: NavItem[] = [];
 
-    if (hasPermission(userPermissions, "admin.settings")) {
-      items.push({ label: "Settings", href: "/settings" });
+    if (hasPermission(effectivePermissions, "admin.settings")) {
+      items.push({ label: "Settings", href: "/admin/settings" });
     }
-    if (hasPermission(userPermissions, "admin.users")) {
+
+    if (hasPermission(effectivePermissions, "admin.users")) {
       items.push({ label: "Users", href: "/admin/users" });
     }
-    if (hasPermission(userPermissions, "admin.roles")) {
-      items.push({ label: "Roles", href: "/admin/roles" });
+
+    if (hasPermission(effectivePermissions, "admin.roles")) {
+      items.push({ label: "Roles & permissions", href: "/admin/roles" });
     }
-    if (hasPermission(userPermissions, "admin.catalog")) {
+
+    if (hasPermission(effectivePermissions, "admin.catalog")) {
       items.push({ label: "Product catalog", href: "/admin/catalog" });
     }
-    if (hasPermission(userPermissions, "admin.marketing_spend")) {
-      items.push({ label: "Marketing spend", href: "/admin/marketing-spend" });
+
+    if (hasPermission(effectivePermissions, "admin.settings")) {
+      items.push({ label: "Pricing", href: "/admin/pricing" });
     }
-    if (hasPermission(userPermissions, "admin.settings")) {
-      items.push({ label: "Pricing settings", href: "/admin/pricing-settings" });
-      items.push({ label: "Tax settings", href: "/admin/tax-settings" });
+
+    if (hasPermission(effectivePermissions, "admin.marketing_spend")) {
+      items.push({ label: "Marketing spend", href: "/admin/marketing" });
     }
 
     return items;
-  }, [userPermissions]);
+  }, [effectivePermissions]);
 
-  const teamItems = useMemo(() => {
-    if (
-      hasPermission(userPermissions, "kpi.view_team") ||
-      hasPermission(userPermissions, "kpi.view_all")
-    ) {
-      return [
-        { label: "Team KPIs", href: "/team/kpis" },
-        { label: "Team schedule", href: "/team/schedule" },
-      ] satisfies NavItem[];
-    }
-
-    return [] satisfies NavItem[];
-  }, [userPermissions]);
-
-  const showAdminSection = adminItems.length > 0;
-  const showTeamSection = teamItems.length > 0;
+  const showWorkSection = workItems.length > 0;
+  const showReportsSection = reportItems.length > 0;
+  const showAdminSection = isOwnerRole || adminItems.length > 0;
+  const adminSectionExpanded = isOwnerRole || isAdminOpen;
 
   return (
     <aside className="flex h-screen w-[240px] min-w-[240px] shrink-0 flex-col bg-[#1C1C1C] px-5 py-6 text-white">
@@ -197,33 +362,41 @@ export function Sidebar({ current }: SidebarProps) {
           </div>
         ) : (
           <>
-            {mainItems.map((item) => (
-              <NavLink key={item.label} item={item} current={current} />
-            ))}
+            <div className="flex flex-col gap-1">
+              {dashboardItems.map((item) => (
+                <NavLink key={item.label} item={item} current={current} />
+              ))}
+            </div>
 
-            {showTeamSection ? (
-              <div className="pt-6">
-                <p className="px-3 pb-3 text-xs font-semibold uppercase tracking-[0.2em] text-white/35">
-                  My Team
-                </p>
-                <div className="flex flex-col gap-1">
-                  {teamItems.map((item) => (
-                    <NavLink key={item.label} item={item} current={current} />
-                  ))}
-                </div>
-              </div>
+            {showWorkSection ? <Section title="Work" items={workItems} current={current} /> : null}
+
+            {showReportsSection ? (
+              <Section title="Reports" items={reportItems} current={current} />
             ) : null}
 
             {showAdminSection ? (
               <div className="mt-auto pt-6">
-                <p className="px-3 pb-3 text-xs font-semibold uppercase tracking-[0.2em] text-white/35">
-                  Admin
-                </p>
-                <div className="flex flex-col gap-1">
-                  {adminItems.map((item) => (
-                    <NavLink key={item.label} item={item} current={current} />
-                  ))}
-                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isOwnerRole) {
+                      setIsAdminOpen((open) => !open);
+                    }
+                  }}
+                  className="flex w-full items-center justify-between px-3 pb-3 text-left text-xs font-semibold uppercase tracking-[0.2em] text-white/35"
+                >
+                  <span>Admin</span>
+                  <span className={`text-sm transition ${adminSectionExpanded ? "rotate-90" : ""}`}>
+                    ›
+                  </span>
+                </button>
+                {adminSectionExpanded ? (
+                  <div className="flex flex-col gap-1">
+                    {adminItems.map((item) => (
+                      <NavLink key={item.label} item={item} current={current} />
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </>

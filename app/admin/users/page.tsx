@@ -12,6 +12,7 @@ import { supabase } from "@/lib/supabase";
 type AppUserRecord = {
   id: string;
   auth_user_id: string | null;
+  created_at?: string | null;
   first_name: string | null;
   last_name: string | null;
   email: string | null;
@@ -124,8 +125,15 @@ export default function AdminUsersPage() {
       await Promise.all([
         supabase
           .from("app_users")
-          .select("id, auth_user_id, first_name, last_name, email, phone, location, role_id, active, last_login_at, roles(id, name, description, color)")
-          .order("first_name"),
+          .select(`
+            *,
+            roles (
+              id,
+              name,
+              color
+            )
+          `)
+          .order("created_at", { ascending: false }),
         supabase.from("roles").select("id, name, description, color").order("name"),
         supabase
           .from("role_permissions")
