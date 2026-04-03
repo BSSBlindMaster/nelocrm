@@ -1,4 +1,9 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useState } from "react";
+import { getUserPermissions, hasPermission } from "@/lib/permissions";
+import { supabase } from "@/lib/supabase";
 
 const navItems = [
   { label: "Dashboard", href: "/dashboard" },
@@ -11,11 +16,50 @@ const navItems = [
   { label: "Settings", href: "/settings" },
 ];
 
+const adminItems = [
+  { label: "Users", href: "/admin/users", permission: "admin.users" },
+  { label: "Roles", href: "/admin/roles", permission: "admin.roles" },
+];
+
 type SidebarProps = {
   current: string;
 };
 
 export function Sidebar({ current }: SidebarProps) {
+  const [userPermissions, setUserPermissions] = useState<string[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadPermissions() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user || !isMounted) {
+        return;
+      }
+
+      const permissions = await getUserPermissions(user.id);
+
+      if (!isMounted) {
+        return;
+      }
+
+      setUserPermissions(permissions);
+    }
+
+    void loadPermissions();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const visibleAdminItems = adminItems.filter((item) =>
+    hasPermission(userPermissions, item.permission),
+  );
+
   return (
     <aside className="flex h-screen w-[240px] min-w-[240px] shrink-0 flex-col bg-[#1C1C1C] px-5 py-6 text-white">
       <Link href="/dashboard" className="flex items-center gap-2 p-4">
@@ -66,6 +110,33 @@ export function Sidebar({ current }: SidebarProps) {
             </Link>
           );
         })}
+
+        {visibleAdminItems.length > 0 ? (
+          <div className="mt-auto pt-6">
+            <p className="px-3 pb-3 text-xs font-semibold uppercase tracking-[0.2em] text-white/35">
+              Admin
+            </p>
+            <div className="flex flex-col gap-1">
+              {visibleAdminItems.map((item) => {
+                const isActive = item.label === current;
+
+                return (
+                  <Link
+                    key={item.label}
+                    href={item.href}
+                    className={`border-l-2 px-3 py-2.5 text-sm transition ${
+                      isActive
+                        ? "border-[#FF4900] bg-[rgba(255,73,0,0.12)] font-medium text-white"
+                        : "border-transparent text-[rgba(255,255,255,0.55)] hover:bg-white/5 hover:text-white"
+                    }`}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
       </nav>
     </aside>
   );
