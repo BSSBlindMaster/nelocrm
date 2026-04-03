@@ -290,6 +290,12 @@ export default function AdminRolesPage() {
                     ) : null}
                   </div>
 
+                  {role.name === "Owner" ? (
+                    <p className="mt-3 text-sm text-stone-500">
+                      Full access — all permissions enabled automatically
+                    </p>
+                  ) : null}
+
                   <div className="mt-5 flex gap-3">
                     <button
                       type="button"

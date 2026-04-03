@@ -9,6 +9,21 @@ export async function getUserPermissions(userId: string): Promise<string[]> {
 
   if (!user) return [];
 
+  // Check if user is Owner role — gets everything
+  const { data: roleData } = await supabase
+    .from("roles")
+    .select("name")
+    .eq("id", user.role_id)
+    .single();
+
+  if (roleData?.name === "Owner") {
+    // Return all permission keys
+    const { data: allPerms } = await supabase
+      .from("permissions")
+      .select("key");
+    return allPerms?.map((p) => p.key) || [];
+  }
+
   const { data: rolePerms } = await supabase
     .from("role_permissions")
     .select("permission_key, allowed")

@@ -6,7 +6,6 @@ import { Sidebar } from "@/components/Sidebar";
 import { Topbar } from "@/components/Topbar";
 import {
   groupPermissionsByCategory,
-  permissionDefinitions,
 } from "@/lib/admin-permissions";
 import { supabase } from "@/lib/supabase";
 
@@ -166,7 +165,14 @@ export default function AdminUsersPage() {
     return defaults;
   }, [form.role_id, rolePermissions]);
 
+  const selectedRole = roles.find((role) => role.id === form.role_id) ?? null;
+  const isOwnerRole = selectedRole?.name === "Owner";
+
   function getEffectivePermission(key: string) {
+    if (isOwnerRole) {
+      return true;
+    }
+
     if (key in overrideMap) {
       return overrideMap[key];
     }
@@ -222,10 +228,18 @@ export default function AdminUsersPage() {
   }
 
   function resetToRoleDefaults() {
+    if (isOwnerRole) {
+      return;
+    }
+
     setOverrideMap({});
   }
 
   function togglePermission(key: string) {
+    if (isOwnerRole) {
+      return;
+    }
+
     setOverrideMap((current) => {
       const roleDefault = selectedRoleDefaults[key] ?? false;
       const currentValue = key in current ? current[key] : roleDefault;
@@ -253,52 +267,47 @@ export default function AdminUsersPage() {
     setMessage("");
 
     if (drawerMode === "create") {
-      const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
-        email: form.email,
-        password: "Welcome2Nelo!",
-        email_confirm: true,
+      const response = await fetch("/api/admin/create-user", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: form.email,
+          firstName: form.first_name,
+          lastName: form.last_name,
+          roleId: form.role_id,
+          location: form.location,
+          phone: form.phone,
+        }),
       });
 
-      if (authError || !authUser.user) {
-        setMessage("Unable to create auth user.");
-        setIsSaving(false);
-        return;
-      }
+      const result = (await response.json()) as {
+        error?: string;
+        success?: boolean;
+        userId?: string;
+        appUserId?: string;
+      };
 
-      const { data: appUser, error: appUserError } = await supabase
-        .from("app_users")
-        .insert({
-          auth_user_id: authUser.user.id,
-          first_name: form.first_name,
-          last_name: form.last_name,
-          email: form.email,
-          phone: form.phone || null,
-          location: form.location,
-          role_id: form.role_id,
-          active: true,
-        })
-        .select("id")
-        .single();
-
-      if (appUserError || !appUser) {
-        setMessage("Unable to create app user.");
+      if (!response.ok || !result.success || !result.userId || !result.appUserId) {
+        setMessage(result.error || "Unable to create auth user.");
         setIsSaving(false);
         return;
       }
 
       const overrideEntries = Object.entries(overrideMap).map(([permission_key, allowed]) => ({
-        user_id: authUser.user.id,
+        user_id: result.userId,
         permission_key,
         allowed,
       }));
 
-      if (overrideEntries.length > 0) {
+      if (overrideEntries.length > 0 && !isOwnerRole) {
         await supabase.from("user_permission_overrides").insert(overrideEntries);
       }
 
       setMessage("User created — they will receive a login email");
       setIsDrawerOpen(false);
-      await loadData(appUser.id);
+      await loadData(result.appUserId);
     } else if (selectedUser) {
       const { error: updateError } = await supabase
         .from("app_users")
@@ -327,7 +336,7 @@ export default function AdminUsersPage() {
             }),
           );
 
-          if (overrideEntries.length > 0) {
+          if (overrideEntries.length > 0 && !isOwnerRole) {
             await supabase.from("user_permission_overrides").insert(overrideEntries);
           }
         }
@@ -636,7 +645,13 @@ export default function AdminUsersPage() {
                 </button>
               </div>
 
-              <div className="mt-4 space-y-5">
+              {isOwnerRole ? (
+                <div className="mt-4 rounded-2xl border border-primary/20 bg-primary/5 px-4 py-4 text-sm text-stone-700">
+                  Owner role has access to everything — no overrides needed
+                </div>
+              ) : null}
+
+              <div className={`mt-4 space-y-5 ${isOwnerRole ? "opacity-50" : ""}`}>
                 {permissionGroups.map((group) => (
                   <div key={group.category}>
                     <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-400">
@@ -671,6 +686,7 @@ export default function AdminUsersPage() {
                             <button
                               type="button"
                               onClick={() => togglePermission(permission.key)}
+                              disabled={isOwnerRole}
                               className={`inline-flex h-6 w-11 items-center rounded-full px-1 ${
                                 isCustom
                                   ? effective
