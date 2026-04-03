@@ -5,6 +5,7 @@ type TopbarProps = {
   title: string;
   actionLabel?: string;
   actionHref?: string;
+  actionOnClick?: () => void;
   titleAdornment?: ReactNode;
   titlePrefix?: ReactNode;
 };
@@ -13,6 +14,7 @@ export function Topbar({
   title,
   actionLabel,
   actionHref,
+  actionOnClick,
   titleAdornment,
   titlePrefix,
 }: TopbarProps) {
@@ -43,6 +45,7 @@ export function Topbar({
       {actionLabel && !actionHref ? (
         <button
           type="button"
+          onClick={actionOnClick}
           className="rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:opacity-95"
         >
           {actionLabel}

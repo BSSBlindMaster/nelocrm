@@ -17,9 +17,35 @@ type SidebarProps = {
 
 export function Sidebar({ current }: SidebarProps) {
   return (
-    <aside className="flex h-screen w-64 flex-col bg-sidebar px-5 py-6 text-white">
-      <Link href="/dashboard" className="px-2 text-3xl font-light tracking-tight">
-        nelo
+    <aside className="flex h-screen w-64 flex-col bg-[#1C1C1C] px-5 py-6 text-white">
+      <Link href="/dashboard" className="flex items-center gap-3 px-2">
+        <span className="inline-flex h-8 w-8 items-center justify-center text-[#FF4900]">
+          <svg
+            viewBox="0 0 24 24"
+            className="h-6 w-6"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            aria-hidden="true"
+          >
+            <path
+              d="M9.5 14.5 14.5 9.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M7.25 16.75a3 3 0 0 1 0-4.25l2-2a3 3 0 0 1 4.25 0"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M16.75 7.25a3 3 0 0 1 0 4.25l-2 2a3 3 0 0 1-4.25 0"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </span>
+        <span className="text-3xl font-light tracking-[-0.5px] text-white">nelo</span>
       </Link>
 
       <nav className="mt-10 flex flex-1 flex-col gap-1">
@@ -30,10 +56,10 @@ export function Sidebar({ current }: SidebarProps) {
             <Link
               key={item.label}
               href={item.href}
-              className={`rounded-xl px-3 py-2.5 text-sm transition ${
+              className={`border-l-2 px-3 py-2.5 text-sm transition ${
                 isActive
-                  ? "bg-white/10 font-medium text-white"
-                  : "text-white/70 hover:bg-white/5 hover:text-white"
+                  ? "border-[#FF4900] bg-[rgba(255,73,0,0.12)] font-medium text-white"
+                  : "border-transparent text-[rgba(255,255,255,0.55)] hover:bg-white/5 hover:text-white"
               }`}
             >
               {item.label}
