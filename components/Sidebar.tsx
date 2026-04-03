@@ -18,11 +18,11 @@ type SidebarProps = {
 export function Sidebar({ current }: SidebarProps) {
   return (
     <aside className="flex h-screen w-64 flex-col bg-[#1C1C1C] px-5 py-6 text-white">
-      <Link href="/dashboard" className="flex items-center gap-3 px-2">
-        <span className="inline-flex h-8 w-8 items-center justify-center text-[#FF4900]">
+      <Link href="/dashboard" className="flex items-center gap-2 p-4">
+        <span className="inline-flex h-[18px] w-6 items-center justify-center text-[#FF4900]">
           <svg
             viewBox="0 0 24 24"
-            className="h-6 w-6"
+            className="h-[18px] w-6"
             fill="none"
             stroke="currentColor"
             strokeWidth="2"
@@ -45,7 +45,7 @@ export function Sidebar({ current }: SidebarProps) {
             />
           </svg>
         </span>
-        <span className="text-3xl font-light tracking-[-0.5px] text-white">nelo</span>
+        <span className="text-[18px] font-light tracking-[-0.5px] text-white">nelo</span>
       </Link>
 
       <nav className="mt-10 flex flex-1 flex-col gap-1">
