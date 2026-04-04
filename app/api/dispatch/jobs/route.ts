@@ -3,80 +3,89 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const date = searchParams.get("date");
+  const date = searchParams.get("date") || new Date().toISOString().slice(0, 10);
 
-  if (!date) {
-    return NextResponse.json({ error: "date parameter required" }, { status: 400 });
-  }
-
-  // Cast scheduled_at to date in the query using two approaches:
-  // 1. Wide UTC range for the requested date
-  // 2. Fallback: also try without Z suffix for naive timestamps
   const startOfDay = `${date}T00:00:00`;
   const endOfDay = `${date}T23:59:59.999`;
 
-  console.log("[dispatch/jobs] date param:", date, "| range:", startOfDay, "to", endOfDay);
+  // Try the join query first. If the DB has multiple FKs from jobs -> app_users
+  // (e.g. assigned_to AND installer_id), the implicit "app_users" join is
+  // ambiguous and PostgREST returns a 400. We attempt the explicit hint first,
+  // then fall back to the implicit one, then fall back to no join at all.
+  let jobs: Array<Record<string, unknown>> | null = null;
+  let error: { message: string } | null = null;
 
-  const { data: jobs, error } = await supabaseAdmin
+  // Attempt 1: explicit FK hint (handles multiple FKs to app_users)
+  const attempt1 = await supabaseAdmin
     .from("jobs")
     .select(
       `
-      id,
-      customer_id,
-      project_id,
-      assigned_to,
-      job_type,
-      status,
-      location,
-      address,
-      gate_code,
-      lat,
-      lng,
-      scheduled_at,
-      duration_minutes,
-      duration_auto_calculated,
-      drive_time_minutes,
-      notes,
-      customers (
-        id,
-        name,
-        phone,
-        address,
-        city,
-        state,
-        zip
-      ),
-      app_users (
-        id,
-        first_name,
-        last_name,
-        phone
-      )
+      *,
+      customers ( id, name, phone, address, city, state, zip, gate_code ),
+      app_users!assigned_to ( id, first_name, last_name, phone )
     `,
     )
     .gte("scheduled_at", startOfDay)
     .lte("scheduled_at", endOfDay)
     .order("scheduled_at", { ascending: true });
 
-  console.log("[dispatch/jobs] query result — error:", error?.message ?? "none", "| rows:", (jobs ?? []).length);
+  if (!attempt1.error) {
+    jobs = attempt1.data as Array<Record<string, unknown>> | null;
+  } else {
+    console.log("[dispatch/jobs] attempt1 (explicit FK) failed:", attempt1.error.message);
 
-  // If no jobs found for this date, log what dates DO have jobs to help debug
-  if ((jobs ?? []).length === 0) {
-    const { data: sample } = await supabaseAdmin
+    // Attempt 2: implicit join (works when only one FK to app_users)
+    const attempt2 = await supabaseAdmin
       .from("jobs")
-      .select("id, scheduled_at")
-      .order("scheduled_at", { ascending: false })
-      .limit(5);
-    console.log("[dispatch/jobs] no jobs for", date, "— sample scheduled_at values:", (sample ?? []).map((j: Record<string, unknown>) => j.scheduled_at));
+      .select(
+        `
+        *,
+        customers ( id, name, phone, address, city, state, zip, gate_code ),
+        app_users ( id, first_name, last_name, phone )
+      `,
+      )
+      .gte("scheduled_at", startOfDay)
+      .lte("scheduled_at", endOfDay)
+      .order("scheduled_at", { ascending: true });
+
+    if (!attempt2.error) {
+      jobs = attempt2.data as Array<Record<string, unknown>> | null;
+    } else {
+      console.log("[dispatch/jobs] attempt2 (implicit) failed:", attempt2.error.message);
+
+      // Attempt 3: no join — just get the raw jobs
+      const attempt3 = await supabaseAdmin
+        .from("jobs")
+        .select("*")
+        .gte("scheduled_at", startOfDay)
+        .lte("scheduled_at", endOfDay)
+        .order("scheduled_at", { ascending: true });
+
+      jobs = attempt3.data as Array<Record<string, unknown>> | null;
+      error = attempt3.error;
+      console.log("[dispatch/jobs] attempt3 (no join):", attempt3.error?.message ?? "ok", "| rows:", (jobs ?? []).length);
+    }
   }
+
+  console.log("[dispatch/jobs] date:", date, "| rows:", (jobs ?? []).length);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  if ((jobs ?? []).length === 0) {
+    // Log what dates actually have jobs to diagnose mismatches
+    const { data: sample } = await supabaseAdmin
+      .from("jobs")
+      .select("id, scheduled_at")
+      .order("scheduled_at", { ascending: false })
+      .limit(5);
+    console.log("[dispatch/jobs] no jobs for", date, "— sample scheduled_at values in DB:", (sample ?? []).map((j: Record<string, unknown>) => j.scheduled_at));
+  }
+
   // Fetch quote lines for each job that has a project_id
   const projectIds = (jobs ?? [])
-    .map((j: Record<string, unknown>) => j.project_id)
+    .map((j) => j.project_id)
     .filter(Boolean) as string[];
 
   let quoteLinesMap: Record<string, Array<Record<string, unknown>>> = {};
@@ -126,7 +135,7 @@ export async function GET(request: Request) {
     }
   }
 
-  const enriched = (jobs ?? []).map((job: Record<string, unknown>) => ({
+  const enriched = (jobs ?? []).map((job) => ({
     ...job,
     products: job.project_id ? quoteLinesMap[job.project_id as string] ?? [] : [],
   }));

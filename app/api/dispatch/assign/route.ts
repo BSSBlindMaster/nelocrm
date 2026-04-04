@@ -31,7 +31,7 @@ export async function POST(request: Request) {
       assigned_to,
       scheduled_at,
       customers ( name, phone, address, city, state, zip ),
-      app_users ( id, first_name, last_name, phone )
+      app_users!assigned_to ( id, first_name, last_name, phone )
     `,
     )
     .single();

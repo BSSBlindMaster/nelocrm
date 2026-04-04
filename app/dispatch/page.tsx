@@ -246,15 +246,45 @@ export default function DispatchPage() {
     const data = await res.json();
     console.log("[dispatch] API returned", (data.jobs ?? []).length, "jobs", data.error ?? "");
     if (data.jobs) {
-      // Normalize: the API may return job_id (remote shape) or id (our shape)
-      const normalized = data.jobs.map((j: Record<string, unknown>) => ({
-        ...j,
-        id: j.id ?? j.job_id ?? "",
-        lat: typeof j.lat === "number" ? j.lat : null,
-        lng: typeof j.lng === "number" ? j.lng : null,
-        duration_minutes: Number(j.duration_minutes ?? 90),
-        products: Array.isArray(j.products) ? j.products : [],
-      }));
+      // Normalize: handle both API response shapes (joined or flat)
+      const normalized = data.jobs.map((j: Record<string, unknown>) => {
+        // Support both "id" and "job_id" field names
+        const id = (j.id ?? j.job_id ?? "") as string;
+
+        // customers may be a joined object or absent
+        let customers = j.customers as Customer | null;
+        if (!customers && j.customer_name) {
+          customers = {
+            id: (j.customer_id as string) ?? "",
+            name: j.customer_name as string,
+            phone: (j.phone as string) ?? null,
+            address: (j.address as string) ?? null,
+          };
+        }
+
+        // app_users may be a joined object or absent
+        let app_users = j.app_users as Installer | null;
+        if (!app_users && j.assigned_to_name && j.assigned_to_name !== "Unassigned") {
+          const parts = (j.assigned_to_name as string).split(" ");
+          app_users = {
+            id: (j.assigned_to as string) ?? "",
+            first_name: parts[0] ?? "",
+            last_name: parts.slice(1).join(" ") ?? "",
+            phone: (j.assigned_to_phone as string) ?? null,
+          };
+        }
+
+        return {
+          ...j,
+          id,
+          customers,
+          app_users,
+          lat: typeof j.lat === "number" ? j.lat : null,
+          lng: typeof j.lng === "number" ? j.lng : null,
+          duration_minutes: Number(j.duration_minutes ?? 90),
+          products: Array.isArray(j.products) ? j.products : [],
+        };
+      });
       setJobs(normalized);
     }
   }, [selectedDate]);
