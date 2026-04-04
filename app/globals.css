@@ -1,3 +1,5 @@
+@import "mapbox-gl/dist/mapbox-gl.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -12,4 +14,21 @@ body {
 
 * {
   box-sizing: border-box;
+}
+
+input,
+select,
+textarea {
+  background-color: #ffffff !important;
+  color: #1c1c1c !important;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #9ca3af !important;
+}
+
+select option {
+  background-color: #ffffff;
+  color: #1c1c1c;
 }

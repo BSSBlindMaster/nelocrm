@@ -38,6 +38,13 @@ type Fabric = {
   fabric_code: string;
 };
 
+type ColorOption = {
+  id: string;
+  fabric_id: string;
+  name: string;
+  color_code: string | null;
+};
+
 type LiftOption = {
   id: string;
   product_id: string;
@@ -64,6 +71,8 @@ type QuoteFormState = {
   manufacturerId: string;
   productId: string;
   fabricId: string;
+  colorId: string;
+  colorName: string;
   liftOptionId: string;
   mountType: "Inside mount" | "Outside mount" | "";
   widthWhole: string;
@@ -84,6 +93,8 @@ type LineItem = {
   fabricId: string;
   fabricName: string;
   fabricCode: string;
+  colorId: string;
+  colorName: string;
   liftOptionId: string;
   liftOptionName: string;
   mountType: "Inside mount" | "Outside mount";
@@ -115,6 +126,8 @@ const emptyForm: QuoteFormState = {
   manufacturerId: "",
   productId: "",
   fabricId: "",
+  colorId: "",
+  colorName: "",
   liftOptionId: "",
   mountType: "",
   widthWhole: "",
@@ -181,6 +194,8 @@ export default function NewQuotePage() {
   const [manufacturers, setManufacturers] = useState<Manufacturer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [fabrics, setFabrics] = useState<Fabric[]>([]);
+  const [colors, setColors] = useState<ColorOption[]>([]);
+  const [useManualColor, setUseManualColor] = useState(false);
   const [liftOptions, setLiftOptions] = useState<LiftOption[]>([]);
   const [businessSettings, setBusinessSettings] = useState<BusinessSettings | null>(null);
   const [pricingSettings, setPricingSettings] = useState<PricingSettings[]>([]);
@@ -305,6 +320,14 @@ export default function NewQuotePage() {
     return fabrics.filter((fabric) => fabric.product_id === form.productId);
   }, [form.productId, fabrics]);
 
+  const availableColors = useMemo(() => {
+    if (!form.fabricId) {
+      return [];
+    }
+
+    return colors.filter((color) => color.fabric_id === form.fabricId);
+  }, [colors, form.fabricId]);
+
   const availableLiftOptions = useMemo(() => {
     if (!form.productId) {
       return [];
@@ -318,16 +341,58 @@ export default function NewQuotePage() {
   );
   const selectedProduct = products.find((product) => product.id === form.productId);
   const selectedFabric = fabrics.find((fabric) => fabric.id === form.fabricId);
+  const selectedColor = availableColors.find((color) => color.id === form.colorId);
   const selectedLiftOption = liftOptions.find(
     (liftOption) => liftOption.id === form.liftOptionId,
   );
   const selectedPricingSettings = pricingSettings.find(
     (pricing) => pricing.manufacturer_id === form.manufacturerId,
   );
+  const hasColorSelection = availableColors.length > 0
+    ? Boolean(form.colorId)
+    : Boolean(form.colorName.trim());
 
   useEffect(() => {
     setAgreementName(selectedCustomer ? getCustomerDisplayName(selectedCustomer) : "");
   }, [selectedCustomer]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadColors() {
+      if (!form.fabricId) {
+        setColors([]);
+        setUseManualColor(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("colors")
+        .select("id, fabric_id, name, color_code")
+        .eq("fabric_id", form.fabricId)
+        .order("name");
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (error) {
+        setColors([]);
+        setUseManualColor(true);
+        return;
+      }
+
+      const nextColors = (data as ColorOption[] | null) ?? [];
+      setColors(nextColors);
+      setUseManualColor(nextColors.length === 0);
+    }
+
+    void loadColors();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [form.fabricId]);
 
   useEffect(() => {
     if (!selectedFabric || !form.widthWhole || !form.heightWhole || !selectedPricingSettings) {
@@ -415,6 +480,8 @@ export default function NewQuotePage() {
           manufacturerId: value,
           productId: "",
           fabricId: "",
+          colorId: "",
+          colorName: "",
           liftOptionId: "",
         };
       }
@@ -424,7 +491,30 @@ export default function NewQuotePage() {
           ...current,
           productId: value,
           fabricId: "",
+          colorId: "",
+          colorName: "",
           liftOptionId: "",
+        };
+      }
+
+      if (key === "fabricId") {
+        return {
+          ...current,
+          fabricId: value,
+          colorId: "",
+          colorName: "",
+          liftOptionId: "",
+        };
+      }
+
+      if (key === "colorId") {
+        const nextColor = availableColors.find((color) => color.id === value);
+        return {
+          ...current,
+          colorId: value,
+          colorName: nextColor
+            ? `${nextColor.name}${nextColor.color_code ? ` - ${nextColor.color_code}` : ""}`
+            : current.colorName,
         };
       }
 
@@ -500,6 +590,8 @@ export default function NewQuotePage() {
       manufacturerId: line.manufacturerId,
       productId: line.productId,
       fabricId: line.fabricId,
+      colorId: line.colorId,
+      colorName: line.colorName,
       liftOptionId: line.liftOptionId,
       mountType: line.mountType,
       widthWhole: String(line.widthWhole),
@@ -524,6 +616,7 @@ export default function NewQuotePage() {
       !selectedManufacturer ||
       !selectedProduct ||
       !selectedFabric ||
+      !hasColorSelection ||
       !selectedLiftOption ||
       !form.mountType ||
       !form.widthWhole ||
@@ -547,6 +640,11 @@ export default function NewQuotePage() {
       fabricId: selectedFabric.id,
       fabricName: selectedFabric.name,
       fabricCode: selectedFabric.fabric_code,
+      colorId: selectedColor?.id ?? "",
+      colorName:
+        selectedColor
+          ? `${selectedColor.name}${selectedColor.color_code ? ` - ${selectedColor.color_code}` : ""}`
+          : form.colorName.trim(),
       liftOptionId: selectedLiftOption.id,
       liftOptionName: selectedLiftOption.name,
       mountType: form.mountType,
@@ -927,7 +1025,35 @@ export default function NewQuotePage() {
 
               {form.fabricId ? (
                 <div>
-                  <StepLabel step={5} label="Lift option" />
+                  <StepLabel step={5} label="Color" />
+                  {useManualColor ? (
+                    <input
+                      type="text"
+                      value={form.colorName}
+                      onChange={(event) => updateForm("colorName", event.target.value)}
+                      placeholder="Color / SKU"
+                      className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 outline-none placeholder:text-stone-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                    />
+                  ) : (
+                    <select
+                      value={form.colorId}
+                      onChange={(event) => updateForm("colorId", event.target.value)}
+                      className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+                    >
+                      <option value="">Select color</option>
+                      {availableColors.map((color) => (
+                        <option key={color.id} value={color.id}>
+                          {color.name}{color.color_code ? ` - ${color.color_code}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              ) : null}
+
+              {hasColorSelection ? (
+                <div>
+                  <StepLabel step={6} label="Lift option" />
                   <select
                     value={form.liftOptionId}
                     onChange={(event) => updateForm("liftOptionId", event.target.value)}
@@ -945,7 +1071,7 @@ export default function NewQuotePage() {
 
               {form.liftOptionId ? (
                 <div>
-                  <StepLabel step={6} label="Mount type" />
+                  <StepLabel step={7} label="Mount type" />
                   <div className="grid gap-3 sm:grid-cols-2">
                     {(["Inside mount", "Outside mount"] as const).map((mountType) => (
                       <button
@@ -967,63 +1093,70 @@ export default function NewQuotePage() {
 
               {form.mountType ? (
                 <div>
-                  <StepLabel step={7} label="Width" />
-                  <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
-                    <input
-                      type="number"
-                      min="0"
-                      value={form.widthWhole}
-                      onChange={(event) => updateForm("widthWhole", event.target.value)}
-                      className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
-                    />
-                    <select
-                      value={form.widthFraction}
-                      onChange={(event) =>
-                        updateForm("widthFraction", event.target.value as FractionValue)
-                      }
-                      className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
-                    >
-                      {FRACTION_OPTIONS.map((fraction) => (
-                        <option key={fraction.value} value={fraction.value}>
-                          {fraction.label}
-                        </option>
-                      ))}
-                    </select>
+                  <StepLabel step={8} label="Size" />
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-xl border border-stone-200 bg-stone-50 p-3">
+                      <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-stone-400">
+                        W
+                      </p>
+                      <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
+                        <input
+                          type="number"
+                          min="0"
+                          value={form.widthWhole}
+                          onChange={(event) => updateForm("widthWhole", event.target.value)}
+                          className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+                        />
+                        <select
+                          value={form.widthFraction}
+                          onChange={(event) =>
+                            updateForm("widthFraction", event.target.value as FractionValue)
+                          }
+                          className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+                        >
+                          {FRACTION_OPTIONS.map((fraction) => (
+                            <option key={fraction.value} value={fraction.value}>
+                              {fraction.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-stone-200 bg-stone-50 p-3">
+                      <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-stone-400">
+                        H
+                      </p>
+                      <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
+                        <input
+                          type="number"
+                          min="0"
+                          value={form.heightWhole}
+                          onChange={(event) => updateForm("heightWhole", event.target.value)}
+                          className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+                        />
+                        <select
+                          value={form.heightFraction}
+                          onChange={(event) =>
+                            updateForm("heightFraction", event.target.value as FractionValue)
+                          }
+                          className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+                        >
+                          {FRACTION_OPTIONS.map((fraction) => (
+                            <option key={fraction.value} value={fraction.value}>
+                              {fraction.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
                   </div>
                 </div>
               ) : null}
 
-              {form.widthWhole ? (
+              {form.widthWhole && form.heightWhole ? (
                 <div>
-                  <StepLabel step={8} label="Height" />
-                  <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
-                    <input
-                      type="number"
-                      min="0"
-                      value={form.heightWhole}
-                      onChange={(event) => updateForm("heightWhole", event.target.value)}
-                      className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
-                    />
-                    <select
-                      value={form.heightFraction}
-                      onChange={(event) =>
-                        updateForm("heightFraction", event.target.value as FractionValue)
-                      }
-                      className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
-                    >
-                      {FRACTION_OPTIONS.map((fraction) => (
-                        <option key={fraction.value} value={fraction.value}>
-                          {fraction.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              ) : null}
-
-              {form.heightWhole ? (
-                <div>
-                  <StepLabel step={9} label="Quantity" />
+                  <StepLabel step={10} label="Quantity" />
                   <input
                     type="number"
                     min="1"
@@ -1036,7 +1169,7 @@ export default function NewQuotePage() {
 
               {form.quantity ? (
                 <div>
-                  <StepLabel step={10} label="Notes" />
+                  <StepLabel step={11} label="Notes" />
                   <input
                     type="text"
                     value={form.notes}
@@ -1113,6 +1246,7 @@ export default function NewQuotePage() {
                           <div className="space-y-1">
                             <p>
                               {line.productName} • {line.fabricName} ({line.fabricCode})
+                              {line.colorName ? ` • ${line.colorName}` : ""}
                             </p>
                             <p className="text-stone-400">
                               {line.liftOptionName} • {line.mountType}

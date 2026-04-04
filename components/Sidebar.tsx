@@ -128,8 +128,10 @@ export function Sidebar({ current }: SidebarProps) {
   const [isLoadingPermissions, setIsLoadingPermissions] = useState(true);
   const [showAllNav, setShowAllNav] = useState(true);
   const [isOwnerRole, setIsOwnerRole] = useState(false);
+  const [currentRoleName, setCurrentRoleName] = useState("");
   const [overdueProjectsCount, setOverdueProjectsCount] = useState(0);
   const [todayAppointmentsCount, setTodayAppointmentsCount] = useState(0);
+  const [unassignedJobsCount, setUnassignedJobsCount] = useState(0);
   const [isAdminOpen, setIsAdminOpen] = useState(
     current === "Settings" ||
       current === "Users" ||
@@ -153,6 +155,7 @@ export function Sidebar({ current }: SidebarProps) {
 
       if (!authUserId) {
         setShowAllNav(true);
+        setCurrentRoleName("");
         setIsLoadingPermissions(false);
         return;
       }
@@ -171,9 +174,12 @@ export function Sidebar({ current }: SidebarProps) {
 
       if (!resolvedUser) {
         setShowAllNav(true);
+        setCurrentRoleName("");
         setIsLoadingPermissions(false);
         return;
       }
+
+      setCurrentRoleName(resolvedUser.roles?.name ?? "");
 
       if (resolvedUser.roles?.name === "Owner") {
         setIsOwnerRole(true);
@@ -330,6 +336,50 @@ export function Sidebar({ current }: SidebarProps) {
   useEffect(() => {
     let isMounted = true;
 
+    async function loadUnassignedJobs() {
+      const currentUser = await getCurrentAppUser();
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (!currentUser || !["Owner", "Office Manager"].includes(currentUser.roleName)) {
+        setUnassignedJobsCount(0);
+        return;
+      }
+
+      const today = new Date().toISOString().slice(0, 10);
+      const start = `${today}T00:00:00.000Z`;
+      const end = `${today}T23:59:59.999Z`;
+
+      const { data, count } = await supabase
+        .from("jobs")
+        .select("id", { count: "exact", head: false })
+        .gte("scheduled_at", start)
+        .lte("scheduled_at", end)
+        .is("assigned_to", null);
+
+      if (!isMounted) {
+        return;
+      }
+
+      setUnassignedJobsCount(count ?? data?.length ?? 0);
+    }
+
+    void loadUnassignedJobs();
+    const intervalId = window.setInterval(() => {
+      void loadUnassignedJobs();
+    }, 5 * 60 * 1000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
     async function loadTodayAppointments() {
       const currentUser = await getCurrentAppUser();
       const today = new Date().toISOString().slice(0, 10);
@@ -425,11 +475,17 @@ export function Sidebar({ current }: SidebarProps) {
         "dispatch.manage",
       ])
     ) {
-      items.push({ label: "Dispatch", href: "/dispatch" });
+      items.push({
+        label: "Dispatch",
+        href: "/dispatch",
+        badgeCount: ["Owner", "Office Manager"].includes(currentRoleName)
+          ? unassignedJobsCount
+          : undefined,
+      });
     }
 
     return items;
-  }, [effectivePermissions, todayAppointmentsCount]);
+  }, [currentRoleName, effectivePermissions, todayAppointmentsCount, unassignedJobsCount]);
 
   const marketingItems = useMemo(() => {
     if (
