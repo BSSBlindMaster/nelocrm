@@ -25,6 +25,8 @@ const ALL_PERMISSION_KEYS = [
   "customers.view_all",
   "customers.view_own",
   "customers.view",
+  "projects.view",
+  "projects.manage",
   "quotes.view_all",
   "quotes.view_own",
   "quotes.view",
@@ -33,6 +35,7 @@ const ALL_PERMISSION_KEYS = [
   "calendar.view",
   "dispatch.view",
   "dispatch.manage",
+  "marketing.view",
   "reports.sales",
   "reports.marketing",
   "reports.financial",
@@ -116,7 +119,7 @@ function Section({
 export function Sidebar({ current }: SidebarProps) {
   const [userPermissions, setUserPermissions] = useState<string[]>([]);
   const [isLoadingPermissions, setIsLoadingPermissions] = useState(true);
-  const [showAllNav, setShowAllNav] = useState(false);
+  const [showAllNav, setShowAllNav] = useState(true);
   const [isOwnerRole, setIsOwnerRole] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState(
     current === "Settings" ||
@@ -127,15 +130,6 @@ export function Sidebar({ current }: SidebarProps) {
 
   useEffect(() => {
     let isMounted = true;
-
-    const timeoutId = window.setTimeout(() => {
-      if (!isMounted) {
-        return;
-      }
-
-      setShowAllNav(true);
-      setIsLoadingPermissions(false);
-    }, 500);
 
     async function loadPermissions() {
       const {
@@ -151,7 +145,6 @@ export function Sidebar({ current }: SidebarProps) {
       if (!authUserId) {
         setShowAllNav(true);
         setIsLoadingPermissions(false);
-        window.clearTimeout(timeoutId);
         return;
       }
 
@@ -170,7 +163,6 @@ export function Sidebar({ current }: SidebarProps) {
       if (!resolvedUser) {
         setShowAllNav(true);
         setIsLoadingPermissions(false);
-        window.clearTimeout(timeoutId);
         return;
       }
 
@@ -179,7 +171,6 @@ export function Sidebar({ current }: SidebarProps) {
         setShowAllNav(true);
         setIsAdminOpen(true);
         setIsLoadingPermissions(false);
-        window.clearTimeout(timeoutId);
         return;
       }
 
@@ -190,15 +181,14 @@ export function Sidebar({ current }: SidebarProps) {
       }
 
       setUserPermissions(permissions);
+      setShowAllNav(false);
       setIsLoadingPermissions(false);
-      window.clearTimeout(timeoutId);
     }
 
     void loadPermissions();
 
     return () => {
       isMounted = false;
-      window.clearTimeout(timeoutId);
     };
   }, [current]);
 
@@ -210,13 +200,8 @@ export function Sidebar({ current }: SidebarProps) {
     return userPermissions;
   }, [isOwnerRole, showAllNav, userPermissions]);
 
-  const dashboardItems = useMemo(
-    () => [{ label: "Dashboard", href: "/dashboard" }] satisfies NavItem[],
-    [],
-  );
-
   const workItems = useMemo(() => {
-    const items: NavItem[] = [];
+    const items: NavItem[] = [{ label: "Dashboard", href: "/dashboard" }];
 
     if (
       hasAnyPermission(effectivePermissions, [
@@ -226,6 +211,20 @@ export function Sidebar({ current }: SidebarProps) {
       ])
     ) {
       items.push({ label: "Customers", href: "/customers" });
+    }
+
+    if (
+      hasAnyPermission(effectivePermissions, [
+        "projects.view",
+        "projects.manage",
+        "quotes.view_all",
+        "quotes.view_own",
+        "quotes.view",
+        "orders.view_all",
+        "orders.manage",
+      ])
+    ) {
+      items.push({ label: "Projects", href: "/projects" });
     }
 
     if (
@@ -263,6 +262,20 @@ export function Sidebar({ current }: SidebarProps) {
     return items;
   }, [effectivePermissions]);
 
+  const marketingItems = useMemo(() => {
+    if (
+      hasAnyPermission(effectivePermissions, [
+        "marketing.view",
+        "reports.marketing",
+        "admin.marketing_spend",
+      ])
+    ) {
+      return [{ label: "Marketing", href: "/marketing" }] satisfies NavItem[];
+    }
+
+    return [] satisfies NavItem[];
+  }, [effectivePermissions]);
+
   const reportItems = useMemo(() => {
     const items: NavItem[] = [];
 
@@ -297,30 +310,11 @@ export function Sidebar({ current }: SidebarProps) {
       items.push({ label: "Settings", href: "/admin/settings" });
     }
 
-    if (hasPermission(effectivePermissions, "admin.users")) {
-      items.push({ label: "Users", href: "/admin/users" });
-    }
-
-    if (hasPermission(effectivePermissions, "admin.roles")) {
-      items.push({ label: "Roles & permissions", href: "/admin/roles" });
-    }
-
-    if (hasPermission(effectivePermissions, "admin.catalog")) {
-      items.push({ label: "Product catalog", href: "/admin/catalog" });
-    }
-
-    if (hasPermission(effectivePermissions, "admin.settings")) {
-      items.push({ label: "Pricing", href: "/admin/pricing" });
-    }
-
-    if (hasPermission(effectivePermissions, "admin.marketing_spend")) {
-      items.push({ label: "Marketing spend", href: "/admin/marketing" });
-    }
-
     return items;
   }, [effectivePermissions]);
 
   const showWorkSection = workItems.length > 0;
+  const showMarketingSection = marketingItems.length > 0;
   const showReportsSection = reportItems.length > 0;
   const showAdminSection = isOwnerRole || adminItems.length > 0;
   const adminSectionExpanded = isOwnerRole || isAdminOpen;
@@ -354,53 +348,43 @@ export function Sidebar({ current }: SidebarProps) {
       </Link>
 
       <nav className="mt-10 flex flex-1 flex-col gap-1">
-        {isLoadingPermissions ? (
-          <div className="space-y-3 px-3">
-            {Array.from({ length: 8 }).map((_, index) => (
-              <div key={index} className="h-9 animate-pulse rounded-xl bg-white/10" />
-            ))}
-          </div>
-        ) : (
-          <>
-            <div className="flex flex-col gap-1">
-              {dashboardItems.map((item) => (
-                <NavLink key={item.label} item={item} current={current} />
-              ))}
+        <div className={isLoadingPermissions ? "animate-pulse" : ""}>
+          {showWorkSection ? <Section title="Work" items={workItems} current={current} /> : null}
+
+          {showMarketingSection ? (
+            <Section title="Marketing" items={marketingItems} current={current} />
+          ) : null}
+
+          {showReportsSection ? (
+            <Section title="Reports" items={reportItems} current={current} />
+          ) : null}
+
+          {showAdminSection ? (
+            <div className="mt-auto pt-6">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isOwnerRole) {
+                    setIsAdminOpen((open) => !open);
+                  }
+                }}
+                className="flex w-full items-center justify-between px-3 pb-3 text-left text-xs font-semibold uppercase tracking-[0.2em] text-white/35"
+              >
+                <span>Admin</span>
+                <span className={`text-sm transition ${adminSectionExpanded ? "rotate-90" : ""}`}>
+                  ›
+                </span>
+              </button>
+              {adminSectionExpanded ? (
+                <div className="flex flex-col gap-1">
+                  {adminItems.map((item) => (
+                    <NavLink key={item.label} item={item} current={current} />
+                  ))}
+                </div>
+              ) : null}
             </div>
-
-            {showWorkSection ? <Section title="Work" items={workItems} current={current} /> : null}
-
-            {showReportsSection ? (
-              <Section title="Reports" items={reportItems} current={current} />
-            ) : null}
-
-            {showAdminSection ? (
-              <div className="mt-auto pt-6">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!isOwnerRole) {
-                      setIsAdminOpen((open) => !open);
-                    }
-                  }}
-                  className="flex w-full items-center justify-between px-3 pb-3 text-left text-xs font-semibold uppercase tracking-[0.2em] text-white/35"
-                >
-                  <span>Admin</span>
-                  <span className={`text-sm transition ${adminSectionExpanded ? "rotate-90" : ""}`}>
-                    ›
-                  </span>
-                </button>
-                {adminSectionExpanded ? (
-                  <div className="flex flex-col gap-1">
-                    {adminItems.map((item) => (
-                      <NavLink key={item.label} item={item} current={current} />
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-          </>
-        )}
+          ) : null}
+        </div>
       </nav>
     </aside>
   );

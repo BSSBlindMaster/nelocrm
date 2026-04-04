@@ -125,14 +125,8 @@ export default function AdminUsersPage() {
       await Promise.all([
         supabase
           .from("app_users")
-          .select(`
-            *,
-            roles (
-              id,
-              name,
-              color
-            )
-          `)
+          .select("*, roles(id, name, color)")
+          .eq("active", true)
           .order("created_at", { ascending: false }),
         supabase.from("roles").select("id, name, description, color").order("name"),
         supabase
