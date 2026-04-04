@@ -240,53 +240,111 @@ export default function DispatchPage() {
   // -----------------------------------------------------------------------
 
   const loadJobs = useCallback(async () => {
-    const dateStr = formatDate(selectedDate);
-    console.log("[dispatch] fetching jobs for date:", dateStr);
-    const res = await fetch(`/api/dispatch/jobs?date=${dateStr}`);
-    const data = await res.json();
-    console.log("[dispatch] API returned", (data.jobs ?? []).length, "jobs", data.error ?? "");
-    if (data.jobs) {
-      // Normalize: handle both API response shapes (joined or flat)
-      const normalized = data.jobs.map((j: Record<string, unknown>) => {
-        // Support both "id" and "job_id" field names
-        const id = (j.id ?? j.job_id ?? "") as string;
+    const d = selectedDate;
+    const startOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0);
+    const endOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59);
 
-        // customers may be a joined object or absent
-        let customers = j.customers as Customer | null;
-        if (!customers && j.customer_name) {
-          customers = {
-            id: (j.customer_id as string) ?? "",
-            name: j.customer_name as string,
-            phone: (j.phone as string) ?? null,
-            address: (j.address as string) ?? null,
-          };
-        }
-
-        // app_users may be a joined object or absent
-        let app_users = j.app_users as Installer | null;
-        if (!app_users && j.assigned_to_name && j.assigned_to_name !== "Unassigned") {
-          const parts = (j.assigned_to_name as string).split(" ");
-          app_users = {
-            id: (j.assigned_to as string) ?? "",
-            first_name: parts[0] ?? "",
-            last_name: parts.slice(1).join(" ") ?? "",
-            phone: (j.assigned_to_phone as string) ?? null,
-          };
-        }
-
-        return {
-          ...j,
+    const { data, error } = await supabase
+      .from("jobs")
+      .select(`
+        *,
+        customers (
           id,
-          customers,
-          app_users,
-          lat: typeof j.lat === "number" ? j.lat : null,
-          lng: typeof j.lng === "number" ? j.lng : null,
-          duration_minutes: Number(j.duration_minutes ?? 90),
-          products: Array.isArray(j.products) ? j.products : [],
-        };
-      });
-      setJobs(normalized);
+          name,
+          first_name,
+          last_name,
+          phone,
+          phone_mobile,
+          address,
+          city,
+          state,
+          zip,
+          gate_code
+        ),
+        app_users!assigned_to (
+          id,
+          first_name,
+          last_name,
+          phone
+        )
+      `)
+      .gte("scheduled_at", startOfDay.toISOString())
+      .lte("scheduled_at", endOfDay.toISOString())
+      .order("scheduled_at", { ascending: true });
+
+    if (error) {
+      // If explicit FK hint fails, retry without it
+      const retry = await supabase
+        .from("jobs")
+        .select("*")
+        .gte("scheduled_at", startOfDay.toISOString())
+        .lte("scheduled_at", endOfDay.toISOString())
+        .order("scheduled_at", { ascending: true });
+
+      const rows = (retry.data ?? []) as Array<Record<string, unknown>>;
+      setJobs(rows.map((j) => ({
+        id: String(j.id ?? ""),
+        customer_id: String(j.customer_id ?? ""),
+        project_id: (j.project_id as string) ?? null,
+        assigned_to: (j.assigned_to as string) ?? null,
+        job_type: String(j.job_type ?? "Install"),
+        status: String(j.status ?? "scheduled"),
+        location: (j.location as string) ?? null,
+        address: (j.address as string) ?? null,
+        gate_code: (j.gate_code as string) ?? null,
+        lat: typeof j.lat === "number" ? j.lat : null,
+        lng: typeof j.lng === "number" ? j.lng : null,
+        scheduled_at: (j.scheduled_at as string) ?? null,
+        duration_minutes: Number(j.duration_minutes ?? 90),
+        duration_auto_calculated: (j.duration_auto_calculated as boolean) ?? null,
+        drive_time_minutes: (j.drive_time_minutes as number) ?? null,
+        notes: (j.notes as string) ?? null,
+        customers: null,
+        app_users: null,
+        products: [],
+      })));
+      return;
     }
+
+    const rows = (data ?? []) as Array<Record<string, unknown>>;
+    setJobs(rows.map((j) => {
+      const c = j.customers as Record<string, unknown> | null;
+      const u = j.app_users as Record<string, unknown> | null;
+      return {
+        id: String(j.id ?? ""),
+        customer_id: String(j.customer_id ?? ""),
+        project_id: (j.project_id as string) ?? null,
+        assigned_to: (j.assigned_to as string) ?? null,
+        job_type: String(j.job_type ?? "Install"),
+        status: String(j.status ?? "scheduled"),
+        location: (j.location as string) ?? null,
+        address: (j.address as string) ?? null,
+        gate_code: (j.gate_code as string) ?? (c?.gate_code as string) ?? null,
+        lat: typeof j.lat === "number" ? j.lat : null,
+        lng: typeof j.lng === "number" ? j.lng : null,
+        scheduled_at: (j.scheduled_at as string) ?? null,
+        duration_minutes: Number(j.duration_minutes ?? 90),
+        duration_auto_calculated: (j.duration_auto_calculated as boolean) ?? null,
+        drive_time_minutes: (j.drive_time_minutes as number) ?? null,
+        notes: (j.notes as string) ?? null,
+        customers: c ? {
+          id: String(c.id ?? ""),
+          name: String(c.name ?? c.first_name ?? ""),
+          phone: String(c.phone ?? c.phone_mobile ?? ""),
+          address: (c.address as string) ?? null,
+          city: (c.city as string) ?? null,
+          state: (c.state as string) ?? null,
+          zip: (c.zip as string) ?? null,
+        } : null,
+        app_users: u ? {
+          id: String(u.id ?? ""),
+          first_name: String(u.first_name ?? ""),
+          last_name: String(u.last_name ?? ""),
+          phone: (u.phone as string) ?? null,
+        } : null,
+        products: [],
+      };
+    }));
   }, [selectedDate]);
 
   useEffect(() => {
