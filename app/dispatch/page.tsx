@@ -1,5 +1,6 @@
 "use client";
 
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-require-imports */
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import {
@@ -10,10 +11,6 @@ import {
 } from "@/lib/current-app-user";
 import { supabase } from "@/lib/supabase";
 import { sendSMS } from "@/lib/twilio";
-
-// mapbox-gl requires the browser window object — import dynamically
-import type mapboxgl from "mapbox-gl";
-let mapboxglModule: typeof mapboxgl | null = null;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -241,10 +238,10 @@ export default function DispatchPage() {
   // Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const mapContainerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<mapboxgl.Map | null>(null);
-  const markersRef = useRef<mapboxgl.Marker[]>([]);
-  const popupsRef = useRef<mapboxgl.Popup[]>([]);
+  const mapRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<any>(null);
+  const markersRef = useRef<any[]>([]);
+  const popupsRef = useRef<any[]>([]);
   const routeLayerAdded = useRef(false);
 
   // -----------------------------------------------------------------------
@@ -364,47 +361,51 @@ export default function DispatchPage() {
   useEffect(() => {
     let isMounted = true;
     async function init() {
-      const [user, users] = await Promise.all([
-        getCurrentAppUser(),
-        getActiveAppUsers(),
-      ]);
+      const user = await getCurrentAppUser();
       if (!isMounted) return;
       setCurrentUser(user);
 
-      // Filter installers — try roleName match (case-insensitive)
-      let installerList = users.filter(
-        (u) => u.roleName.toLowerCase() === "installer",
-      );
+      // Fetch installers: try by role_id first, fall back to role name join
+      const INSTALLER_ROLE_ID = "00000000-0000-0000-0000-000000000007";
+      const { data: byRoleId } = await supabase
+        .from("app_users")
+        .select("id, auth_user_id, first_name, last_name, location, phone")
+        .eq("role_id", INSTALLER_ROLE_ID)
+        .eq("active", true)
+        .order("first_name", { ascending: true });
 
-      // If no installers found via getActiveAppUsers, query directly
-      if (installerList.length === 0) {
-        const { data: directInstallers } = await supabase
+      let installerRows = (byRoleId as Array<Record<string, unknown>> | null) ?? [];
+
+      // If role_id didn't match, try joining with roles table
+      if (installerRows.length === 0) {
+        const { data: byJoin } = await supabase
           .from("app_users")
           .select("id, auth_user_id, first_name, last_name, location, phone, roles(name)")
           .eq("active", true)
           .order("first_name", { ascending: true });
 
-        const rows = (directInstallers as Array<Record<string, unknown>> | null) ?? [];
-        installerList = rows
-          .filter((r) => {
-            const roleName = String(
-              (r.roles as Record<string, unknown> | null)?.name ?? "",
-            ).toLowerCase();
-            return roleName === "installer";
-          })
-          .map((r) => ({
-            id: String(r.id ?? ""),
-            authUserId: String(r.auth_user_id ?? ""),
-            firstName: String(r.first_name ?? ""),
-            lastName: String(r.last_name ?? ""),
-            fullName: [r.first_name, r.last_name].filter(Boolean).join(" ") || "Installer",
-            location: String(r.location ?? ""),
-            roleName: "Installer",
-            phone: String(r.phone ?? ""),
-          }));
+        installerRows = ((byJoin as Array<Record<string, unknown>> | null) ?? []).filter((r) => {
+          const roleName = String(
+            (r.roles as Record<string, unknown> | null)?.name ?? "",
+          ).toLowerCase();
+          return roleName === "installer";
+        });
       }
 
-      setInstallers(installerList);
+      if (!isMounted) return;
+
+      setInstallers(
+        installerRows.map((r) => ({
+          id: String(r.id ?? ""),
+          authUserId: String(r.auth_user_id ?? ""),
+          firstName: String(r.first_name ?? ""),
+          lastName: String(r.last_name ?? ""),
+          fullName: [r.first_name, r.last_name].filter(Boolean).join(" ") || "Installer",
+          location: String(r.location ?? ""),
+          roleName: "Installer",
+          phone: String(r.phone ?? ""),
+        })),
+      );
       setIsLoading(false);
     }
     void init();
@@ -456,68 +457,50 @@ export default function DispatchPage() {
   // Map
   // -----------------------------------------------------------------------
 
-  const [mapReady, setMapReady] = useState(false);
-
-  // Dynamically load mapbox-gl on the client (it requires window/document)
+  // Initialize the map once on mount using require (avoids SSR issues)
   useEffect(() => {
     if (typeof window === "undefined") return;
-    let cancelled = false;
-    import("mapbox-gl").then((mod) => {
-      if (cancelled) return;
-      mapboxglModule = mod.default;
-      const token = process.env.NEXT_PUBLIC_MAPBOX_KEY;
-      if (token) {
-        (mapboxglModule as unknown as Record<string, string>).accessToken = token;
-      }
-      // Load CSS
-      if (!document.querySelector('link[href*="mapbox-gl"]')) {
-        const link = document.createElement("link");
-        link.rel = "stylesheet";
-        link.href = "https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.css";
-        document.head.appendChild(link);
-      }
-      setMapReady(true);
-    });
-    return () => { cancelled = true; };
-  }, []);
+    if (!mapRef.current) return;
+    if (mapInstanceRef.current) return;
 
-  // Initialize the map after mapbox-gl is loaded and the container is in the DOM
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!mapReady || !mapboxglModule) return;
-    if (!mapContainerRef.current) return;
-    if (mapRef.current) return; // already initialized
+    // Load CSS
+    if (!document.querySelector('link[href*="mapbox-gl"]')) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = "https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.css";
+      document.head.appendChild(link);
+    }
 
-    const mb = mapboxglModule;
-    const map = new mb.Map({
-      container: mapContainerRef.current,
-      style:
-        mapStyle === "streets"
-          ? "mapbox://styles/mapbox/streets-v12"
-          : "mapbox://styles/mapbox/satellite-streets-v12",
+    const mapboxgl = require("mapbox-gl") as any;
+    mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_KEY;
+
+    mapInstanceRef.current = new mapboxgl.Map({
+      container: mapRef.current,
+      style: "mapbox://styles/mapbox/streets-v12",
       center: [-111.891, 33.4152],
       zoom: 10,
     });
 
-    map.addControl(new mb.NavigationControl(), "top-left");
-    mapRef.current = map;
+    mapInstanceRef.current.addControl(new mapboxgl.NavigationControl(), "top-left");
 
     return () => {
-      map.remove();
-      mapRef.current = null;
+      mapInstanceRef.current?.remove();
+      mapInstanceRef.current = null;
     };
-  }, [mapReady, mapStyle]);
+  }, []);
 
   // Update markers when jobs change
   useEffect(() => {
-    const map = mapRef.current;
-    const mb = mapboxglModule;
-    if (!map || !mb) return;
+    if (typeof window === "undefined") return;
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    const mapboxgl = require("mapbox-gl") as any;
 
     // Clear old markers
-    markersRef.current.forEach((m) => m.remove());
+    markersRef.current.forEach((m: any) => m.remove());
     markersRef.current = [];
-    popupsRef.current.forEach((p) => p.remove());
+    popupsRef.current.forEach((p: any) => p.remove());
     popupsRef.current = [];
 
     // Remove old route
@@ -528,10 +511,10 @@ export default function DispatchPage() {
     }
 
     const jobsWithCoords = jobs.filter((j) => j.lat && j.lng);
-    const bounds = new mb.LngLatBounds();
+    const bounds = new mapboxgl.LngLatBounds();
     const routeCoords: [number, number][] = [];
 
-    jobsWithCoords.forEach((job, idx) => {
+    jobsWithCoords.forEach((job: Job, idx: number) => {
       const color = STATUS_MARKER_COLOR[job.status] ?? "#FF4900";
       const el = document.createElement("div");
       el.className = "dispatch-marker";
@@ -548,7 +531,7 @@ export default function DispatchPage() {
         el.style.zIndex = "10";
       }
 
-      const popup = new mb.Popup({ offset: 25 }).setHTML(`
+      const popup = new mapboxgl.Popup({ offset: 25 }).setHTML(`
         <div style="font-family:system-ui;font-size:13px;max-width:220px;">
           <strong>${customerDisplayName(job.customers, job.notes)}</strong><br/>
           <span style="color:#666">${fullAddress(job.customers, job.address)}</span><br/>
@@ -559,7 +542,7 @@ export default function DispatchPage() {
       `);
       popupsRef.current.push(popup);
 
-      const marker = new mb.Marker({ element: el })
+      const marker = new mapboxgl.Marker({ element: el })
         .setLngLat([job.lng!, job.lat!])
         .setPopup(popup)
         .addTo(map);
@@ -611,16 +594,17 @@ export default function DispatchPage() {
         map.on("load", addRoute);
       }
     }
-  }, [jobs, selectedJobId, mapReady]);
+  }, [jobs, selectedJobId]);
 
   function fitAllJobs() {
-    const map = mapRef.current;
-    const mb = mapboxglModule;
-    if (!map || !mb) return;
+    if (typeof window === "undefined") return;
+    const map = mapInstanceRef.current;
+    if (!map) return;
+    const mapboxgl = require("mapbox-gl") as any;
     const withCoords = jobs.filter((j) => j.lat && j.lng);
     if (withCoords.length === 0) return;
-    const bounds = new mb.LngLatBounds();
-    withCoords.forEach((j) => bounds.extend([j.lng!, j.lat!]));
+    const bounds = new mapboxgl.LngLatBounds();
+    withCoords.forEach((j: Job) => bounds.extend([j.lng!, j.lat!]));
     map.fitBounds(bounds, { padding: 60, maxZoom: 14 });
   }
 
@@ -1072,8 +1056,8 @@ export default function DispatchPage() {
       {/* RIGHT PANEL */}
       <div className="flex flex-1 flex-col">
         {/* MAP — top 55% */}
-        <div style={{ position: "relative", width: "100%", height: "55%", minHeight: 400 }}>
-          <div ref={mapContainerRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" }} />
+        <div style={{ position: "relative", width: "100%", height: "400px", backgroundColor: "#f0f0f0" }}>
+          <div ref={mapRef} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} />
 
           {/* Map controls overlay */}
           <div className="absolute right-3 top-3 flex flex-col gap-2">
