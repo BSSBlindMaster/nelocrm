@@ -9,8 +9,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "date parameter required" }, { status: 400 });
   }
 
-  const startOfDay = `${date}T00:00:00`;
-  const endOfDay = `${date}T23:59:59`;
+  const startOfDay = `${date}T00:00:00.000Z`;
+  const endOfDay = `${date}T23:59:59.999Z`;
 
   const { data: jobs, error } = await supabaseAdmin
     .from("jobs")
