@@ -809,7 +809,7 @@ export default function CalendarPage() {
         <div className="flex-1 space-y-6 p-8">
           {/* Role-based action buttons */}
           <div className="flex flex-wrap gap-3">
-            {getRoleCanSubmitAvailability(currentUser?.roleName ?? "") && (
+            {["Sales Rep", "Owner", "Sales Manager"].includes(currentUser?.roleName ?? "") && (
               <Link
                 href="/calendar/availability"
                 className="rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white hover:opacity-90"
@@ -817,7 +817,7 @@ export default function CalendarPage() {
                 Submit my availability
               </Link>
             )}
-            {["Owner", "Office Manager", "Appointment Setter"].includes(currentUser?.roleName ?? "") && (
+            {["Owner", "Office Manager", "Appointment Setter", "Sales Manager"].includes(currentUser?.roleName ?? "") && (
               <Link
                 href="/calendar/booking"
                 className="rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white hover:opacity-90"

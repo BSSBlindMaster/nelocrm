@@ -420,7 +420,7 @@ export function Sidebar({ current }: SidebarProps) {
       if (currentRoleName === "Sales Rep") {
         items.push({ label: "My availability", href: "/calendar/availability" });
       }
-      if (["Owner", "Office Manager", "Appointment Setter"].includes(currentRoleName)) {
+      if (["Owner", "Office Manager", "Appointment Setter", "Sales Manager"].includes(currentRoleName)) {
         items.push({ label: "Book appointment", href: "/calendar/booking" });
       }
     }
