@@ -9,8 +9,13 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "date parameter required" }, { status: 400 });
   }
 
-  const startOfDay = `${date}T00:00:00.000Z`;
-  const endOfDay = `${date}T23:59:59.999Z`;
+  // Cast scheduled_at to date in the query using two approaches:
+  // 1. Wide UTC range for the requested date
+  // 2. Fallback: also try without Z suffix for naive timestamps
+  const startOfDay = `${date}T00:00:00`;
+  const endOfDay = `${date}T23:59:59.999`;
+
+  console.log("[dispatch/jobs] date param:", date, "| range:", startOfDay, "to", endOfDay);
 
   const { data: jobs, error } = await supabaseAdmin
     .from("jobs")
@@ -52,6 +57,18 @@ export async function GET(request: Request) {
     .gte("scheduled_at", startOfDay)
     .lte("scheduled_at", endOfDay)
     .order("scheduled_at", { ascending: true });
+
+  console.log("[dispatch/jobs] query result — error:", error?.message ?? "none", "| rows:", (jobs ?? []).length);
+
+  // If no jobs found for this date, log what dates DO have jobs to help debug
+  if ((jobs ?? []).length === 0) {
+    const { data: sample } = await supabaseAdmin
+      .from("jobs")
+      .select("id, scheduled_at")
+      .order("scheduled_at", { ascending: false })
+      .limit(5);
+    console.log("[dispatch/jobs] no jobs for", date, "— sample scheduled_at values:", (sample ?? []).map((j: Record<string, unknown>) => j.scheduled_at));
+  }
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

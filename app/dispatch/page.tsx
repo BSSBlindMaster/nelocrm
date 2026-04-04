@@ -241,9 +241,22 @@ export default function DispatchPage() {
 
   const loadJobs = useCallback(async () => {
     const dateStr = formatDate(selectedDate);
+    console.log("[dispatch] fetching jobs for date:", dateStr);
     const res = await fetch(`/api/dispatch/jobs?date=${dateStr}`);
     const data = await res.json();
-    if (data.jobs) setJobs(data.jobs);
+    console.log("[dispatch] API returned", (data.jobs ?? []).length, "jobs", data.error ?? "");
+    if (data.jobs) {
+      // Normalize: the API may return job_id (remote shape) or id (our shape)
+      const normalized = data.jobs.map((j: Record<string, unknown>) => ({
+        ...j,
+        id: j.id ?? j.job_id ?? "",
+        lat: typeof j.lat === "number" ? j.lat : null,
+        lng: typeof j.lng === "number" ? j.lng : null,
+        duration_minutes: Number(j.duration_minutes ?? 90),
+        products: Array.isArray(j.products) ? j.products : [],
+      }));
+      setJobs(normalized);
+    }
   }, [selectedDate]);
 
   useEffect(() => {
@@ -892,10 +905,10 @@ export default function DispatchPage() {
       </div>
 
       {/* RIGHT PANEL */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex flex-1 flex-col">
         {/* MAP — top 55% */}
-        <div className="relative min-h-[400px] flex-[55]">
-          <div ref={mapContainerRef} className="absolute inset-0" />
+        <div className="relative" style={{ height: "55%", minHeight: 400 }}>
+          <div ref={mapContainerRef} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} />
 
           {/* Map controls overlay */}
           <div className="absolute right-3 top-3 flex flex-col gap-2">
@@ -932,7 +945,7 @@ export default function DispatchPage() {
         </div>
 
         {/* TIMELINE — bottom 45% */}
-        <div className="flex min-h-0 flex-[45] flex-col border-t border-stone-200">
+        <div className="flex flex-col border-t border-stone-200 overflow-hidden" style={{ height: "45%" }}>
           {/* Timeline header */}
           <div className="flex border-b border-stone-200">
             <div className="w-[160px] min-w-[160px] border-r border-stone-200 bg-[#1C1C1C] px-3 py-2">
