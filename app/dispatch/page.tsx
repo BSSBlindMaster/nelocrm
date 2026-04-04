@@ -20,6 +20,8 @@ import "mapbox-gl/dist/mapbox-gl.css";
 type Customer = {
   id: string;
   name: string;
+  first_name?: string | null;
+  last_name?: string | null;
   phone?: string | null;
   address?: string | null;
   city?: string | null;
@@ -141,6 +143,13 @@ function formatTime(dateStr: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function customerDisplayName(c: Customer | null): string {
+  if (!c) return "Unknown";
+  if (c.name) return c.name;
+  const full = [c.first_name, c.last_name].filter(Boolean).join(" ");
+  return full || "Unknown";
 }
 
 function fullAddress(c: Customer | null, jobAddress?: string | null): string {
@@ -329,7 +338,9 @@ export default function DispatchPage() {
         notes: (j.notes as string) ?? null,
         customers: c ? {
           id: String(c.id ?? ""),
-          name: String(c.name ?? c.first_name ?? ""),
+          name: String(c.name ?? "") || [c.first_name, c.last_name].filter(Boolean).join(" ") || "Unknown",
+          first_name: (c.first_name as string) ?? null,
+          last_name: (c.last_name as string) ?? null,
           phone: String(c.phone ?? c.phone_mobile ?? ""),
           address: (c.address as string) ?? null,
           city: (c.city as string) ?? null,
@@ -408,11 +419,18 @@ export default function DispatchPage() {
   // Map
   // -----------------------------------------------------------------------
 
+  // Set the access token once on mount
+  useEffect(() => {
+    const token = process.env.NEXT_PUBLIC_MAPBOX_KEY;
+    if (token) {
+      (mapboxgl as unknown as Record<string, string>).accessToken = token;
+    }
+  }, []);
+
+  // Initialize the map after mount
   useEffect(() => {
     if (!mapContainerRef.current) return;
-    const token = process.env.NEXT_PUBLIC_MAPBOX_KEY;
-    if (!token) return;
-    (mapboxgl as unknown as Record<string, string>).accessToken = token;
+    if (!(mapboxgl as unknown as Record<string, string>).accessToken) return;
 
     const map = new mapboxgl.Map({
       container: mapContainerRef.current,
@@ -474,7 +492,7 @@ export default function DispatchPage() {
 
       const popup = new mapboxgl.Popup({ offset: 25 }).setHTML(`
         <div style="font-family:system-ui;font-size:13px;max-width:220px;">
-          <strong>${job.customers?.name ?? "Unknown"}</strong><br/>
+          <strong>${customerDisplayName(job.customers)}</strong><br/>
           <span style="color:#666">${fullAddress(job.customers, job.address)}</span><br/>
           <span>${job.scheduled_at ? formatTime(job.scheduled_at) : "Unscheduled"}</span><br/>
           <span>Installer: ${installerName(job.app_users)}</span><br/>
@@ -609,7 +627,7 @@ export default function DispatchPage() {
     const time = job.scheduled_at ? formatTime(job.scheduled_at) : "TBD";
     await sendSMS(
       job.app_users.phone,
-      `You have been assigned a job: ${job.customers?.name} at ${addr} on ${date} at ${time}`,
+      `You have been assigned a job: ${customerDisplayName(job.customers)} at ${addr} on ${date} at ${time}`,
     );
   }
 
@@ -942,7 +960,7 @@ export default function DispatchPage() {
                 </div>
               </div>
               <p className="text-sm font-semibold text-stone-900">
-                {job.customers?.name ?? "Unknown"}
+                {customerDisplayName(job.customers)}
               </p>
               <p className="mt-0.5 flex items-center gap-1 text-xs text-stone-500">
                 <svg
@@ -995,8 +1013,8 @@ export default function DispatchPage() {
       {/* RIGHT PANEL */}
       <div className="flex flex-1 flex-col">
         {/* MAP — top 55% */}
-        <div className="relative" style={{ height: "55%", minHeight: 400 }}>
-          <div ref={mapContainerRef} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} />
+        <div style={{ position: "relative", width: "100%", height: "55%", minHeight: 400 }}>
+          <div ref={mapContainerRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" }} />
 
           {/* Map controls overlay */}
           <div className="absolute right-3 top-3 flex flex-col gap-2">
@@ -1118,7 +1136,7 @@ export default function DispatchPage() {
             {/* Customer info */}
             <div className="mb-5">
               <h3 className="text-base font-semibold text-stone-900">
-                {selectedJob.customers?.name}
+                {customerDisplayName(selectedJob.customers)}
               </h3>
               {selectedJob.customers?.phone && (
                 <a
@@ -1670,7 +1688,7 @@ function TimelineRow({
               }}
             >
               <div className="truncate font-semibold">
-                {job.customers?.name ?? "Unknown"}
+                {customerDisplayName(job.customers)}
               </div>
               <div className="truncate text-white/80">
                 {abbrevAddress(job.customers, job.address)}
