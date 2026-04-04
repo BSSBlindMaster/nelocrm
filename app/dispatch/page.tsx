@@ -1,7 +1,8 @@
 "use client";
 
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-require-imports */
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { useCallback, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { Sidebar } from "@/components/Sidebar";
 import {
   getCurrentAppUser,
@@ -11,6 +12,8 @@ import {
 } from "@/lib/current-app-user";
 import { supabase } from "@/lib/supabase";
 import { sendSMS } from "@/lib/twilio";
+
+const DispatchMap = dynamic(() => import("@/components/DispatchMap"), { ssr: false });
 
 // ---------------------------------------------------------------------------
 // Types
@@ -202,8 +205,6 @@ export default function DispatchPage() {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [liveTracking, setLiveTracking] = useState(false);
-  const [mapStyle, setMapStyle] = useState<"streets" | "satellite">("streets");
   const [undoAction, setUndoAction] = useState<{
     jobId: string;
     prevAssignedTo: string | null;
@@ -237,12 +238,6 @@ export default function DispatchPage() {
 
   // Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  const mapRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<any>(null);
-  const markersRef = useRef<any[]>([]);
-  const popupsRef = useRef<any[]>([]);
-  const routeLayerAdded = useRef(false);
 
   // -----------------------------------------------------------------------
   // Data loading
@@ -454,159 +449,23 @@ export default function DispatchPage() {
   );
 
   // -----------------------------------------------------------------------
-  // Map
+  // Map — rendered via <DispatchMap> component (dynamically imported, ssr: false)
   // -----------------------------------------------------------------------
 
-  // Initialize the map once on mount using require (avoids SSR issues)
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!mapRef.current) return;
-    if (mapInstanceRef.current) return;
-
-    // Load CSS
-    if (!document.querySelector('link[href*="mapbox-gl"]')) {
-      const link = document.createElement("link");
-      link.rel = "stylesheet";
-      link.href = "https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.css";
-      document.head.appendChild(link);
-    }
-
-    const mapboxgl = require("mapbox-gl") as any;
-    mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_KEY;
-
-    mapInstanceRef.current = new mapboxgl.Map({
-      container: mapRef.current,
-      style: "mapbox://styles/mapbox/streets-v12",
-      center: [-111.891, 33.4152],
-      zoom: 10,
-    });
-
-    mapInstanceRef.current.addControl(new mapboxgl.NavigationControl(), "top-left");
-
-    return () => {
-      mapInstanceRef.current?.remove();
-      mapInstanceRef.current = null;
-    };
-  }, []);
-
-  // Update markers when jobs change
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const map = mapInstanceRef.current;
-    if (!map) return;
-
-    const mapboxgl = require("mapbox-gl") as any;
-
-    // Clear old markers
-    markersRef.current.forEach((m: any) => m.remove());
-    markersRef.current = [];
-    popupsRef.current.forEach((p: any) => p.remove());
-    popupsRef.current = [];
-
-    // Remove old route
-    if (map.getSource("route")) {
-      map.removeLayer("route-line");
-      map.removeSource("route");
-      routeLayerAdded.current = false;
-    }
-
-    const jobsWithCoords = jobs.filter((j) => j.lat && j.lng);
-    const bounds = new mapboxgl.LngLatBounds();
-    const routeCoords: [number, number][] = [];
-
-    jobsWithCoords.forEach((job: Job, idx: number) => {
-      const color = STATUS_MARKER_COLOR[job.status] ?? "#FF4900";
-      const el = document.createElement("div");
-      el.className = "dispatch-marker";
-      el.style.cssText = `
-        width:32px;height:32px;border-radius:50%;background:${color};
-        color:#fff;font-weight:700;font-size:13px;display:flex;
-        align-items:center;justify-content:center;border:2px solid #fff;
-        box-shadow:0 2px 6px rgba(0,0,0,0.3);cursor:pointer;
-      `;
-      el.textContent = String(idx + 1);
-
-      if (selectedJobId === job.id) {
-        el.style.transform = "scale(1.3)";
-        el.style.zIndex = "10";
-      }
-
-      const popup = new mapboxgl.Popup({ offset: 25 }).setHTML(`
-        <div style="font-family:system-ui;font-size:13px;max-width:220px;">
-          <strong>${customerDisplayName(job.customers, job.notes)}</strong><br/>
-          <span style="color:#666">${fullAddress(job.customers, job.address)}</span><br/>
-          <span>${job.scheduled_at ? formatTime(job.scheduled_at) : "Unscheduled"}</span><br/>
-          <span>Installer: ${installerName(job.app_users)}</span><br/>
-          <span style="color:${color};font-weight:600;text-transform:capitalize">${job.status.replace("_", " ")}</span>
-        </div>
-      `);
-      popupsRef.current.push(popup);
-
-      const marker = new mapboxgl.Marker({ element: el })
-        .setLngLat([job.lng!, job.lat!])
-        .setPopup(popup)
-        .addTo(map);
-
-      el.addEventListener("click", () => {
-        setSelectedJobId(job.id);
-      });
-
-      markersRef.current.push(marker);
-      bounds.extend([job.lng!, job.lat!]);
-      routeCoords.push([job.lng!, job.lat!]);
-    });
-
-    // Fit bounds
-    if (jobsWithCoords.length > 0) {
-      map.fitBounds(bounds, { padding: 60, maxZoom: 14 });
-    }
-
-    // Draw route line
-    if (routeCoords.length >= 2) {
-      const addRoute = () => {
-        if (map.getSource("route")) return;
-        map.addSource("route", {
-          type: "geojson",
-          data: {
-            type: "Feature",
-            properties: {},
-            geometry: { type: "LineString", coordinates: routeCoords },
-          },
-        });
-        map.addLayer({
-          id: "route-line",
-          type: "line",
-          source: "route",
-          layout: { "line-join": "round", "line-cap": "round" },
-          paint: {
-            "line-color": "#FF4900",
-            "line-width": 3,
-            "line-opacity": 0.6,
-            "line-dasharray": [2, 2],
-          },
-        });
-        routeLayerAdded.current = true;
-      };
-
-      if (map.isStyleLoaded()) {
-        addRoute();
-      } else {
-        map.on("load", addRoute);
-      }
-    }
-  }, [jobs, selectedJobId]);
-
-  function fitAllJobs() {
-    if (typeof window === "undefined") return;
-    const map = mapInstanceRef.current;
-    if (!map) return;
-    const mapboxgl = require("mapbox-gl") as any;
-    const withCoords = jobs.filter((j) => j.lat && j.lng);
-    if (withCoords.length === 0) return;
-    const bounds = new mapboxgl.LngLatBounds();
-    withCoords.forEach((j: Job) => bounds.extend([j.lng!, j.lat!]));
-    map.fitBounds(bounds, { padding: 60, maxZoom: 14 });
-  }
+  const mapJobs = useMemo(
+    () =>
+      jobs.map((j) => ({
+        id: j.id,
+        lat: j.lat,
+        lng: j.lng,
+        customer_name: customerDisplayName(j.customers, j.notes),
+        address: fullAddress(j.customers, j.address),
+        status: j.status,
+        scheduled_at: j.scheduled_at,
+        installer_name: installerName(j.app_users),
+      })),
+    [jobs],
+  );
 
   // -----------------------------------------------------------------------
   // Actions
@@ -1055,43 +914,12 @@ export default function DispatchPage() {
 
       {/* RIGHT PANEL */}
       <div className="flex flex-1 flex-col">
-        {/* MAP — top 55% */}
-        <div style={{ position: "relative", width: "100%", height: "400px", backgroundColor: "#f0f0f0" }}>
-          <div ref={mapRef} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} />
-
-          {/* Map controls overlay */}
-          <div className="absolute right-3 top-3 flex flex-col gap-2">
-            <button
-              type="button"
-              onClick={() => setLiveTracking((v) => !v)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold shadow-md ${
-                liveTracking
-                  ? "bg-primary text-white"
-                  : "bg-white text-stone-700"
-              }`}
-            >
-              LIVE TRACKING {liveTracking ? "ON" : "OFF"}
-            </button>
-            <button
-              type="button"
-              onClick={fitAllJobs}
-              className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-stone-700 shadow-md hover:bg-stone-50"
-            >
-              Fit all jobs
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                setMapStyle((s) =>
-                  s === "streets" ? "satellite" : "streets",
-                )
-              }
-              className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-stone-700 shadow-md hover:bg-stone-50"
-            >
-              {mapStyle === "streets" ? "Satellite" : "Streets"}
-            </button>
-          </div>
-        </div>
+        {/* MAP */}
+        <DispatchMap
+          jobs={mapJobs}
+          selectedJobId={selectedJobId}
+          onJobClick={(id) => setSelectedJobId(id)}
+        />
 
         {/* TIMELINE — bottom 45% */}
         <div className="flex flex-col border-t border-stone-200 overflow-hidden" style={{ height: "45%" }}>
