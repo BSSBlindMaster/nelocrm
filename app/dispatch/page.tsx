@@ -10,8 +10,10 @@ import {
 } from "@/lib/current-app-user";
 import { supabase } from "@/lib/supabase";
 import { sendSMS } from "@/lib/twilio";
-import mapboxgl from "mapbox-gl";
-import "mapbox-gl/dist/mapbox-gl.css";
+
+// mapbox-gl requires the browser window object — import dynamically
+import type mapboxgl from "mapbox-gl";
+let mapboxglModule: typeof mapboxgl | null = null;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -145,17 +147,18 @@ function formatTime(dateStr: string): string {
   });
 }
 
-function customerDisplayName(c: Customer | null): string {
-  if (!c) return "Unknown";
+function customerDisplayName(c: Customer | null, jobNotes?: string | null): string {
+  if (!c) return jobNotes || "Unknown";
   if (c.name) return c.name;
   const full = [c.first_name, c.last_name].filter(Boolean).join(" ");
-  return full || "Unknown";
+  return full || jobNotes || "Unknown";
 }
 
 function fullAddress(c: Customer | null, jobAddress?: string | null): string {
   if (jobAddress) return jobAddress;
-  if (!c) return "";
-  return [c.address, c.city, c.state, c.zip].filter(Boolean).join(", ");
+  if (!c) return "Address not set";
+  const parts = [c.address, c.city, c.state, c.zip].filter(Boolean).join(", ");
+  return parts || "Address not set";
 }
 
 function abbrevAddress(c: Customer | null, jobAddress?: string | null): string {
@@ -367,7 +370,41 @@ export default function DispatchPage() {
       ]);
       if (!isMounted) return;
       setCurrentUser(user);
-      setInstallers(users.filter((u) => u.roleName === "Installer"));
+
+      // Filter installers — try roleName match (case-insensitive)
+      let installerList = users.filter(
+        (u) => u.roleName.toLowerCase() === "installer",
+      );
+
+      // If no installers found via getActiveAppUsers, query directly
+      if (installerList.length === 0) {
+        const { data: directInstallers } = await supabase
+          .from("app_users")
+          .select("id, auth_user_id, first_name, last_name, location, phone, roles(name)")
+          .eq("active", true)
+          .order("first_name", { ascending: true });
+
+        const rows = (directInstallers as Array<Record<string, unknown>> | null) ?? [];
+        installerList = rows
+          .filter((r) => {
+            const roleName = String(
+              (r.roles as Record<string, unknown> | null)?.name ?? "",
+            ).toLowerCase();
+            return roleName === "installer";
+          })
+          .map((r) => ({
+            id: String(r.id ?? ""),
+            authUserId: String(r.auth_user_id ?? ""),
+            firstName: String(r.first_name ?? ""),
+            lastName: String(r.last_name ?? ""),
+            fullName: [r.first_name, r.last_name].filter(Boolean).join(" ") || "Installer",
+            location: String(r.location ?? ""),
+            roleName: "Installer",
+            phone: String(r.phone ?? ""),
+          }));
+      }
+
+      setInstallers(installerList);
       setIsLoading(false);
     }
     void init();
@@ -419,20 +456,35 @@ export default function DispatchPage() {
   // Map
   // -----------------------------------------------------------------------
 
-  // Set the access token once on mount
+  const [mapReady, setMapReady] = useState(false);
+
+  // Dynamically load mapbox-gl on the client (it requires window/document)
   useEffect(() => {
-    const token = process.env.NEXT_PUBLIC_MAPBOX_KEY;
-    if (token) {
-      (mapboxgl as unknown as Record<string, string>).accessToken = token;
-    }
+    if (typeof window === "undefined") return;
+    import("mapbox-gl").then((mod) => {
+      mapboxglModule = mod.default;
+      const token = process.env.NEXT_PUBLIC_MAPBOX_KEY;
+      if (token) {
+        (mapboxglModule as unknown as Record<string, string>).accessToken = token;
+      }
+      // Load CSS
+      if (!document.querySelector('link[href*="mapbox-gl"]')) {
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = "https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.css";
+        document.head.appendChild(link);
+      }
+      setMapReady(true);
+    });
   }, []);
 
-  // Initialize the map after mount
+  // Initialize the map after mapbox-gl is loaded
   useEffect(() => {
-    if (!mapContainerRef.current) return;
-    if (!(mapboxgl as unknown as Record<string, string>).accessToken) return;
+    if (!mapReady || !mapboxglModule || !mapContainerRef.current) return;
+    if (mapRef.current) return; // already initialized
 
-    const map = new mapboxgl.Map({
+    const mb = mapboxglModule;
+    const map = new mb.Map({
       container: mapContainerRef.current,
       style:
         mapStyle === "streets"
@@ -442,19 +494,20 @@ export default function DispatchPage() {
       zoom: 10,
     });
 
-    map.addControl(new mapboxgl.NavigationControl(), "top-left");
+    map.addControl(new mb.NavigationControl(), "top-left");
     mapRef.current = map;
 
     return () => {
       map.remove();
       mapRef.current = null;
     };
-  }, [mapStyle]);
+  }, [mapReady, mapStyle]);
 
   // Update markers when jobs change
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    const mb = mapboxglModule;
+    if (!map || !mb) return;
 
     // Clear old markers
     markersRef.current.forEach((m) => m.remove());
@@ -470,7 +523,7 @@ export default function DispatchPage() {
     }
 
     const jobsWithCoords = jobs.filter((j) => j.lat && j.lng);
-    const bounds = new mapboxgl.LngLatBounds();
+    const bounds = new mb.LngLatBounds();
     const routeCoords: [number, number][] = [];
 
     jobsWithCoords.forEach((job, idx) => {
@@ -490,9 +543,9 @@ export default function DispatchPage() {
         el.style.zIndex = "10";
       }
 
-      const popup = new mapboxgl.Popup({ offset: 25 }).setHTML(`
+      const popup = new mb.Popup({ offset: 25 }).setHTML(`
         <div style="font-family:system-ui;font-size:13px;max-width:220px;">
-          <strong>${customerDisplayName(job.customers)}</strong><br/>
+          <strong>${customerDisplayName(job.customers, job.notes)}</strong><br/>
           <span style="color:#666">${fullAddress(job.customers, job.address)}</span><br/>
           <span>${job.scheduled_at ? formatTime(job.scheduled_at) : "Unscheduled"}</span><br/>
           <span>Installer: ${installerName(job.app_users)}</span><br/>
@@ -501,7 +554,7 @@ export default function DispatchPage() {
       `);
       popupsRef.current.push(popup);
 
-      const marker = new mapboxgl.Marker({ element: el })
+      const marker = new mb.Marker({ element: el })
         .setLngLat([job.lng!, job.lat!])
         .setPopup(popup)
         .addTo(map);
@@ -553,14 +606,15 @@ export default function DispatchPage() {
         map.on("load", addRoute);
       }
     }
-  }, [jobs, selectedJobId]);
+  }, [jobs, selectedJobId, mapReady]);
 
   function fitAllJobs() {
     const map = mapRef.current;
-    if (!map) return;
+    const mb = mapboxglModule;
+    if (!map || !mb) return;
     const withCoords = jobs.filter((j) => j.lat && j.lng);
     if (withCoords.length === 0) return;
-    const bounds = new mapboxgl.LngLatBounds();
+    const bounds = new mb.LngLatBounds();
     withCoords.forEach((j) => bounds.extend([j.lng!, j.lat!]));
     map.fitBounds(bounds, { padding: 60, maxZoom: 14 });
   }
@@ -627,7 +681,7 @@ export default function DispatchPage() {
     const time = job.scheduled_at ? formatTime(job.scheduled_at) : "TBD";
     await sendSMS(
       job.app_users.phone,
-      `You have been assigned a job: ${customerDisplayName(job.customers)} at ${addr} on ${date} at ${time}`,
+      `You have been assigned a job: ${customerDisplayName(job.customers, job.notes)} at ${addr} on ${date} at ${time}`,
     );
   }
 
@@ -960,7 +1014,7 @@ export default function DispatchPage() {
                 </div>
               </div>
               <p className="text-sm font-semibold text-stone-900">
-                {customerDisplayName(job.customers)}
+                {customerDisplayName(job.customers, job.notes)}
               </p>
               <p className="mt-0.5 flex items-center gap-1 text-xs text-stone-500">
                 <svg
@@ -1136,7 +1190,7 @@ export default function DispatchPage() {
             {/* Customer info */}
             <div className="mb-5">
               <h3 className="text-base font-semibold text-stone-900">
-                {customerDisplayName(selectedJob.customers)}
+                {customerDisplayName(selectedJob.customers, selectedJob.notes)}
               </h3>
               {selectedJob.customers?.phone && (
                 <a
@@ -1688,7 +1742,7 @@ function TimelineRow({
               }}
             >
               <div className="truncate font-semibold">
-                {customerDisplayName(job.customers)}
+                {customerDisplayName(job.customers, job.notes)}
               </div>
               <div className="truncate text-white/80">
                 {abbrevAddress(job.customers, job.address)}
