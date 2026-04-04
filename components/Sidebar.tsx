@@ -212,7 +212,7 @@ export function Sidebar({ current }: SidebarProps) {
     let isMounted = true;
 
     async function loadOverdueCount() {
-      const [currentUser, activeUsers, projectsResponse] = await Promise.all([
+      const [currentUser, , projectsResponse] = await Promise.all([
         getCurrentAppUser(),
         getActiveAppUsers(),
         supabase
@@ -223,16 +223,8 @@ export function Sidebar({ current }: SidebarProps) {
             project_tasks (
               id,
               due_date,
-              due_at,
               status,
-              assigned_to_user_id,
-              assignee_id,
-              user_id,
-              app_users (
-                id,
-                auth_user_id,
-                location
-              )
+              assigned_to
             )
           `),
       ]);
@@ -241,26 +233,14 @@ export function Sidebar({ current }: SidebarProps) {
         return;
       }
 
-      const scopedTeamIds = new Set(
-        activeUsers
-          .filter((user) => !currentUser?.location || user.location === currentUser.location)
-          .map((user) => user.id),
-      );
-      const scopedTeamAuthIds = new Set(
-        activeUsers
-          .filter((user) => !currentUser?.location || user.location === currentUser.location)
-          .map((user) => user.authUserId),
-      );
-
       const overdueCount = (((projectsResponse.data as Array<Record<string, unknown>> | null) ?? []).flatMap(
         (project) => {
-          const projectLocation = String(project.location ?? "");
           const tasks = Array.isArray(project.project_tasks)
             ? (project.project_tasks as Array<Record<string, unknown>>)
             : [];
 
           return tasks.filter((task) => {
-            const dueDate = String(task.due_date ?? task.due_at ?? "");
+            const dueDate = String(task.due_date ?? "");
             const status = String(task.status ?? "pending").toLowerCase();
             const isComplete = ["complete", "completed", "done"].includes(status);
             if (isComplete || !dueDate || new Date(dueDate).getTime() >= Date.now()) {
@@ -271,51 +251,8 @@ export function Sidebar({ current }: SidebarProps) {
               return true;
             }
 
-            if (currentUser.roleName === "Sales Manager") {
-              const taskUser =
-                task.app_users && !Array.isArray(task.app_users)
-                  ? (task.app_users as Record<string, unknown>)
-                  : null;
-              const assignedId =
-                typeof task.assigned_to_user_id === "string"
-                  ? task.assigned_to_user_id
-                  : typeof task.assignee_id === "string"
-                    ? task.assignee_id
-                    : typeof task.user_id === "string"
-                      ? task.user_id
-                      : typeof taskUser?.id === "string"
-                        ? taskUser.id
-                        : "";
-              const assignedAuthId =
-                typeof taskUser?.auth_user_id === "string" ? taskUser.auth_user_id : "";
-              const assignedLocation =
-                typeof taskUser?.location === "string" ? taskUser.location : projectLocation;
-
-              return (
-                (!!assignedId && scopedTeamIds.has(assignedId)) ||
-                (!!assignedAuthId && scopedTeamAuthIds.has(assignedAuthId)) ||
-                (!!assignedLocation && assignedLocation === currentUser.location)
-              );
-            }
-
-            const taskUser =
-              task.app_users && !Array.isArray(task.app_users)
-                ? (task.app_users as Record<string, unknown>)
-                : null;
-            const assignedId =
-              typeof task.assigned_to_user_id === "string"
-                ? task.assigned_to_user_id
-                : typeof task.assignee_id === "string"
-                  ? task.assignee_id
-                  : typeof task.user_id === "string"
-                    ? task.user_id
-                    : typeof taskUser?.id === "string"
-                      ? taskUser.id
-                      : "";
-            const assignedAuthId =
-              typeof taskUser?.auth_user_id === "string" ? taskUser.auth_user_id : "";
-
-            return assignedId === currentUser.id || assignedAuthId === currentUser.authUserId;
+            const assignedTo = typeof task.assigned_to === "string" ? task.assigned_to : "";
+            return assignedTo === currentUser.id || assignedTo === currentUser.authUserId;
           });
         },
       )).length;
@@ -339,20 +276,23 @@ export function Sidebar({ current }: SidebarProps) {
 
     async function loadTodayAppointments() {
       const currentUser = await getCurrentAppUser();
-      const today = new Date().toISOString().slice(0, 10);
+      const today = new Date();
+      const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0).toISOString();
+      const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59).toISOString();
 
       const { data } = await supabase
         .from("appointments")
-        .select("id, rep_user_id, date")
-        .eq("date", today);
+        .select("id, assigned_to, scheduled_at")
+        .gte("scheduled_at", startOfDay)
+        .lte("scheduled_at", endOfDay);
 
       if (!isMounted) {
         return;
       }
 
-      const rows = (data as Array<{ rep_user_id?: string | null }> | null) ?? [];
+      const rows = (data as Array<{ assigned_to?: string | null }> | null) ?? [];
       const count = currentUser
-        ? rows.filter((appointment) => appointment.rep_user_id === currentUser.id).length
+        ? rows.filter((appointment) => appointment.assigned_to === currentUser.id).length
         : rows.length;
       setTodayAppointmentsCount(count);
     }

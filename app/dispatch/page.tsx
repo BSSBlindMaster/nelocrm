@@ -461,7 +461,9 @@ export default function DispatchPage() {
   // Dynamically load mapbox-gl on the client (it requires window/document)
   useEffect(() => {
     if (typeof window === "undefined") return;
+    let cancelled = false;
     import("mapbox-gl").then((mod) => {
+      if (cancelled) return;
       mapboxglModule = mod.default;
       const token = process.env.NEXT_PUBLIC_MAPBOX_KEY;
       if (token) {
@@ -476,11 +478,14 @@ export default function DispatchPage() {
       }
       setMapReady(true);
     });
+    return () => { cancelled = true; };
   }, []);
 
-  // Initialize the map after mapbox-gl is loaded
+  // Initialize the map after mapbox-gl is loaded and the container is in the DOM
   useEffect(() => {
-    if (!mapReady || !mapboxglModule || !mapContainerRef.current) return;
+    if (typeof window === "undefined") return;
+    if (!mapReady || !mapboxglModule) return;
+    if (!mapContainerRef.current) return;
     if (mapRef.current) return; // already initialized
 
     const mb = mapboxglModule;
