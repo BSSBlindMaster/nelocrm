@@ -4,6 +4,9 @@ export type SampleProjectTask = {
   id: string;
   name: string;
   assignedTo: string;
+  assignedUserId?: string;
+  assignedAuthUserId?: string;
+  assignedLocation?: string;
   dueDate: string;
   status: SampleTaskStatus;
 };
@@ -14,6 +17,7 @@ export type SampleQuoteLine = {
   productName: string;
   color: string;
   liftOption: string;
+  quantity?: number;
   total: number;
 };
 
@@ -51,6 +55,8 @@ export type SampleProject = {
   workflowTemplateName: string;
   status: "Active" | "On Hold" | "Complete" | "Cancelled";
   location: "Ellsworth" | "Lindsay";
+  notes?: string;
+  scheduledAt?: string;
   salesRep: {
     name: string;
     initials: string;

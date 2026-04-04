@@ -3,8 +3,15 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { InstallerView } from "@/components/InstallerView";
 import { Sidebar } from "@/components/Sidebar";
 import { Topbar } from "@/components/Topbar";
+import {
+  getActiveAppUsers,
+  getCurrentAppUser,
+  type ActiveAppUser,
+  type CurrentAppUser,
+} from "@/lib/current-app-user";
 import {
   getSampleProjectById,
   sampleProjects,
@@ -18,6 +25,15 @@ import {
 import { supabase } from "@/lib/supabase";
 
 type ProjectTab = "Tasks" | "Quote" | "Payments" | "Documents & Photos" | "Activity log";
+type TaskFilter = "all" | "mine" | "pending" | "complete";
+
+type TaskDraft = {
+  id: string | null;
+  name: string;
+  assignedUserId: string;
+  dueDate: string;
+  status: SampleProjectTask["status"];
+};
 
 const tabs: ProjectTab[] = ["Tasks", "Quote", "Payments", "Documents & Photos", "Activity log"];
 
@@ -35,6 +51,10 @@ function formatDate(value: string) {
     day: "numeric",
     year: "numeric",
   });
+}
+
+function toDateInputValue(value: string) {
+  return new Date(value).toISOString().slice(0, 10);
 }
 
 function getDueTextTone(date: string) {
@@ -75,6 +95,18 @@ function getUserName(record: Record<string, unknown> | null | undefined) {
     .join(" ") || "Unassigned";
 }
 
+function matchesMine(task: SampleProjectTask, currentUser: CurrentAppUser | null) {
+  if (!currentUser) {
+    return true;
+  }
+
+  return (
+    task.assignedUserId === currentUser.id ||
+    task.assignedAuthUserId === currentUser.authUserId ||
+    task.assignedTo === currentUser.fullName
+  );
+}
+
 function mapRecordToProject(
   project: Record<string, unknown>,
   tasks: Array<Record<string, unknown>>,
@@ -96,24 +128,45 @@ function mapRecordToProject(
       ? (project.app_users as Record<string, unknown>)
       : null;
 
-  const mappedTasks: SampleProjectTask[] = tasks.map((task, index) => ({
-    id: String(task.id ?? `task-${index}`),
-    name: String(task.name ?? task.task_name ?? `Task ${index + 1}`),
-    assignedTo:
-      typeof task.assigned_to_name === "string"
-        ? task.assigned_to_name
-        : getUserName(
-            task.app_users && !Array.isArray(task.app_users)
-              ? (task.app_users as Record<string, unknown>)
-              : null,
-          ),
-    dueDate: String(task.due_date ?? task.due_at ?? new Date().toISOString()),
-    status:
-      String(task.status ?? "Pending").toLowerCase() === "complete" ||
-      String(task.status ?? "Pending").toLowerCase() === "completed"
-        ? "Complete"
-        : "Pending",
-  }));
+  const mappedTasks: SampleProjectTask[] = tasks.map((task, index) => {
+    const taskUser =
+      task.app_users && !Array.isArray(task.app_users)
+        ? (task.app_users as Record<string, unknown>)
+        : null;
+
+    return {
+      id: String(task.id ?? `task-${index}`),
+      name: String(task.name ?? task.task_name ?? `Task ${index + 1}`),
+      assignedTo:
+        typeof task.assigned_to_name === "string"
+          ? task.assigned_to_name
+          : getUserName(taskUser),
+      assignedUserId:
+        typeof task.assigned_to_user_id === "string"
+          ? task.assigned_to_user_id
+          : typeof task.assignee_id === "string"
+            ? task.assignee_id
+            : typeof task.user_id === "string"
+              ? task.user_id
+              : typeof taskUser?.id === "string"
+                ? taskUser.id
+                : undefined,
+      assignedAuthUserId:
+        typeof taskUser?.auth_user_id === "string" ? taskUser.auth_user_id : undefined,
+      assignedLocation:
+        typeof taskUser?.location === "string"
+          ? taskUser.location
+          : typeof project.location === "string"
+            ? project.location
+            : undefined,
+      dueDate: String(task.due_date ?? task.due_at ?? new Date().toISOString()),
+      status:
+        String(task.status ?? "Pending").toLowerCase() === "complete" ||
+        String(task.status ?? "Pending").toLowerCase() === "completed"
+          ? "Complete"
+          : "Pending",
+    };
+  });
 
   const mappedQuoteLines: SampleQuoteLine[] = quoteLines.map((line, index) => ({
     id: String(line.id ?? `line-${index}`),
@@ -121,6 +174,7 @@ function mapRecordToProject(
     productName: String(line.product_name ?? line.product ?? "Window Treatment"),
     color: String(line.color ?? line.fabric_name ?? "Selected color"),
     liftOption: String(line.lift_option_name ?? line.lift_option ?? "Standard lift"),
+    quantity: Number(line.quantity ?? 1),
     total: Number(line.line_total ?? line.sell_price ?? 0),
   }));
 
@@ -166,6 +220,8 @@ function mapRecordToProject(
     workflowTemplateName: String(workflowTemplate?.name ?? "Workflow template"),
     status: String(project.status ?? "Active") as SampleProject["status"],
     location: String(project.location ?? "Ellsworth") as SampleProject["location"],
+    notes: String(project.notes ?? ""),
+    scheduledAt: String(project.scheduled_at ?? project.install_date ?? tasks[0]?.due_date ?? tasks[0]?.due_at ?? ""),
     salesRep: {
       name: getUserName(assignedUser),
       initials: getUserName(assignedUser)
@@ -176,7 +232,9 @@ function mapRecordToProject(
         .join(""),
     },
     quoteId: String(project.quote_id ?? ""),
-    totalAmount: Number(project.total_amount ?? project.total ?? mappedQuoteLines.reduce((sum, line) => sum + line.total, 0)),
+    totalAmount: Number(
+      project.total_amount ?? project.total ?? mappedQuoteLines.reduce((sum, line) => sum + line.total, 0),
+    ),
     amountPaid: mappedPayments.reduce((sum, payment) => sum + payment.amount, 0),
     gateCode: typeof customer?.gate_code === "string" ? customer.gate_code : undefined,
     customerContact: {
@@ -207,18 +265,61 @@ function mapRecordToProject(
   };
 }
 
+function getAssignableUsers(roleName: string, currentUser: CurrentAppUser | null, users: ActiveAppUser[]) {
+  if (roleName === "Owner" || roleName === "Sales Manager" || roleName === "Office Manager") {
+    return users;
+  }
+
+  if (roleName === "Sales Rep") {
+    return users.filter(
+      (user) => user.id === currentUser?.id || user.roleName === "Installer",
+    );
+  }
+
+  if (roleName === "Installer") {
+    return users.filter((user) => user.id === currentUser?.id);
+  }
+
+  return users;
+}
+
+function getAllowedTaskFilters(roleName: string): TaskFilter[] {
+  if (roleName === "Installer") {
+    return ["mine", "pending", "complete"];
+  }
+
+  return ["all", "mine", "pending", "complete"];
+}
+
+const emptyTaskDraft: TaskDraft = {
+  id: null,
+  name: "",
+  assignedUserId: "",
+  dueDate: new Date().toISOString().slice(0, 10),
+  status: "Pending",
+};
+
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
   const projectId = Array.isArray(params?.id) ? params.id[0] : params?.id;
   const [project, setProject] = useState<SampleProject | null>(null);
+  const [currentUser, setCurrentUser] = useState<CurrentAppUser | null>(null);
+  const [activeUsers, setActiveUsers] = useState<ActiveAppUser[]>([]);
   const [activeTab, setActiveTab] = useState<ProjectTab>("Tasks");
+  const [taskFilter, setTaskFilter] = useState<TaskFilter>("pending");
   const [isLoading, setIsLoading] = useState(true);
   const [localTasks, setLocalTasks] = useState<SampleProjectTask[]>([]);
   const [localDocuments, setLocalDocuments] = useState<SampleDocument[]>([]);
   const [status, setStatus] = useState<SampleProject["status"]>("Active");
+  const [isTaskEditorOpen, setIsTaskEditorOpen] = useState(false);
+  const [taskDraft, setTaskDraft] = useState<TaskDraft>(emptyTaskDraft);
 
   useEffect(() => {
     async function loadProject() {
+      const [appUser, users] = await Promise.all([getCurrentAppUser(), getActiveAppUsers()]);
+      setCurrentUser(appUser);
+      setActiveUsers(users);
+
       if (!projectId) {
         setProject(sampleProjects[0]);
         setLocalTasks(sampleProjects[0].tasks);
@@ -256,9 +357,21 @@ export default function ProjectDetailPage() {
       const [tasksResponse, paymentsResponse, documentsResponse, activityResponse, quoteLinesResponse] =
         await Promise.all([
           supabase.from("project_tasks").select("*, app_users(*)").eq("project_id", projectId),
-          supabase.from("payments").select("*").eq("project_id", projectId).order("created_at", { ascending: false }),
-          supabase.from("project_documents").select("*").eq("project_id", projectId).order("created_at", { ascending: false }),
-          supabase.from("audit_log").select("*").eq("project_id", projectId).order("created_at", { ascending: false }),
+          supabase
+            .from("payments")
+            .select("*")
+            .eq("project_id", projectId)
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("project_documents")
+            .select("*")
+            .eq("project_id", projectId)
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("audit_log")
+            .select("*")
+            .eq("project_id", projectId)
+            .order("created_at", { ascending: false }),
           supabase.from("quote_lines").select("*").eq("quote_id", String(projectRecord.quote_id ?? "")),
         ]);
 
@@ -281,20 +394,64 @@ export default function ProjectDetailPage() {
     void loadProject();
   }, [projectId]);
 
-  const sortedTasks = useMemo(() => {
-    return [...localTasks].sort((a, b) => {
+  const assignableUsers = useMemo(
+    () => getAssignableUsers(currentUser?.roleName ?? "", currentUser, activeUsers),
+    [activeUsers, currentUser],
+  );
+  const allowedTaskFilters = useMemo(
+    () => getAllowedTaskFilters(currentUser?.roleName ?? ""),
+    [currentUser?.roleName],
+  );
+
+  const filteredTasks = useMemo(() => {
+    const nextTasks = [...localTasks].sort((a, b) => {
       if (a.status !== b.status) {
         return a.status === "Pending" ? -1 : 1;
       }
 
       return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
     });
-  }, [localTasks]);
+
+    return nextTasks.filter((task) => {
+      if (taskFilter === "all") {
+        return true;
+      }
+
+      if (taskFilter === "mine") {
+        return matchesMine(task, currentUser);
+      }
+
+      if (taskFilter === "complete") {
+        return task.status === "Complete";
+      }
+
+      return task.status === "Pending";
+    });
+  }, [localTasks, taskFilter, currentUser]);
 
   const amountPaid = useMemo(
     () => project?.payments.reduce((sum, payment) => sum + payment.amount, 0) ?? 0,
     [project],
   );
+
+  function openNewTaskEditor() {
+    setTaskDraft({
+      ...emptyTaskDraft,
+      assignedUserId: assignableUsers[0]?.id ?? currentUser?.id ?? "",
+    });
+    setIsTaskEditorOpen(true);
+  }
+
+  function openEditTaskEditor(task: SampleProjectTask) {
+    setTaskDraft({
+      id: task.id,
+      name: task.name,
+      assignedUserId: task.assignedUserId ?? assignableUsers.find((user) => user.fullName === task.assignedTo)?.id ?? "",
+      dueDate: toDateInputValue(task.dueDate),
+      status: task.status,
+    });
+    setIsTaskEditorOpen(true);
+  }
 
   async function toggleTask(taskId: string) {
     const nextTasks: SampleProjectTask[] = localTasks.map((task) =>
@@ -309,12 +466,77 @@ export default function ProjectDetailPage() {
     setLocalTasks(nextTasks);
 
     const toggledTask = nextTasks.find((task) => task.id === taskId);
-    if (toggledTask && !String(taskId).startsWith("t")) {
+    if (toggledTask && !String(taskId).startsWith("t") && !String(taskId).startsWith("local-task")) {
       await supabase
         .from("project_tasks")
         .update({ status: toggledTask.status })
         .eq("id", taskId);
     }
+  }
+
+  async function saveTaskDraft() {
+    if (!taskDraft.name || !taskDraft.assignedUserId || !project) {
+      return;
+    }
+
+    const assignedUser = assignableUsers.find((user) => user.id === taskDraft.assignedUserId);
+    const dueDateIso = new Date(taskDraft.dueDate).toISOString();
+
+    if (taskDraft.id) {
+      const nextTasks = localTasks.map((task) =>
+        task.id === taskDraft.id
+          ? {
+              ...task,
+              name: taskDraft.name,
+              assignedTo: assignedUser?.fullName ?? task.assignedTo,
+              assignedUserId: assignedUser?.id,
+              assignedAuthUserId: assignedUser?.authUserId,
+              assignedLocation: assignedUser?.location,
+              dueDate: dueDateIso,
+              status: taskDraft.status,
+            }
+          : task,
+      );
+      setLocalTasks(nextTasks);
+
+      if (!String(taskDraft.id).startsWith("t") && !String(taskDraft.id).startsWith("local-task")) {
+        await supabase
+          .from("project_tasks")
+          .update({
+            name: taskDraft.name,
+            due_date: dueDateIso,
+            status: taskDraft.status,
+            assigned_to_user_id: assignedUser?.id ?? null,
+          })
+          .eq("id", taskDraft.id);
+      }
+    } else {
+      const localTask: SampleProjectTask = {
+        id: `local-task-${Date.now()}`,
+        name: taskDraft.name,
+        assignedTo: assignedUser?.fullName ?? "Unassigned",
+        assignedUserId: assignedUser?.id,
+        assignedAuthUserId: assignedUser?.authUserId,
+        assignedLocation: assignedUser?.location,
+        dueDate: dueDateIso,
+        status: taskDraft.status,
+      };
+
+      setLocalTasks((current) => [...current, localTask]);
+
+      if (projectId && !String(projectId).startsWith("sample-project")) {
+        await supabase.from("project_tasks").insert({
+          project_id: projectId,
+          name: taskDraft.name,
+          due_date: dueDateIso,
+          status: taskDraft.status,
+          assigned_to_user_id: assignedUser?.id ?? null,
+        });
+      }
+    }
+
+    setIsTaskEditorOpen(false);
+    setTaskDraft(emptyTaskDraft);
   }
 
   function handleFileUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -344,6 +566,16 @@ export default function ProjectDetailPage() {
           Loading project...
         </section>
       </main>
+    );
+  }
+
+  if (currentUser?.roleName === "Installer") {
+    return (
+      <InstallerView
+        project={project}
+        projectId={projectId ?? project.id}
+        currentUser={currentUser}
+      />
     );
   }
 
@@ -436,56 +668,161 @@ export default function ProjectDetailPage() {
               <div className="p-6">
                 {activeTab === "Tasks" ? (
                   <div className="space-y-4">
-                    {sortedTasks.map((task) => (
-                      <div
-                        key={task.id}
-                        className="flex flex-col gap-3 rounded-2xl border border-stone-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
-                      >
-                        <div>
-                          <p
-                            className={`font-medium ${
-                              task.status === "Complete"
-                                ? "text-stone-400 line-through"
-                                : "text-stone-900"
-                            }`}
-                          >
-                            {task.name}
-                          </p>
-                          <p className="mt-1 text-sm text-stone-500">Assigned to {task.assignedTo}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {[
+                        { key: "all", label: "All tasks" },
+                        { key: "mine", label: "My tasks" },
+                        { key: "pending", label: "Pending" },
+                        { key: "complete", label: "Complete" },
+                      ]
+                        .filter((option) => allowedTaskFilters.includes(option.key as TaskFilter))
+                        .map((option) => (
+                        <button
+                          key={option.key}
+                          type="button"
+                          onClick={() => setTaskFilter(option.key as TaskFilter)}
+                          className={`rounded-full px-3 py-2 text-sm font-medium transition ${
+                            taskFilter === option.key
+                              ? "bg-primary text-white"
+                              : "bg-stone-100 text-stone-600 hover:bg-stone-200"
+                          }`}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {isTaskEditorOpen ? (
+                      <div className="rounded-2xl border border-primary/20 bg-orange-50/40 p-4">
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <div className="md:col-span-2">
+                            <label className="text-sm font-medium text-stone-700">Task name</label>
+                            <input
+                              value={taskDraft.name}
+                              onChange={(event) =>
+                                setTaskDraft((current) => ({ ...current, name: event.target.value }))
+                              }
+                              className="mt-2 w-full rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none transition focus:border-primary"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-sm font-medium text-stone-700">Assigned to</label>
+                            <select
+                              value={taskDraft.assignedUserId}
+                              onChange={(event) =>
+                                setTaskDraft((current) => ({
+                                  ...current,
+                                  assignedUserId: event.target.value,
+                                }))
+                              }
+                              className="mt-2 w-full rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none transition focus:border-primary"
+                            >
+                              <option value="">Select a user</option>
+                              {assignableUsers.map((user) => (
+                                <option key={user.id} value={user.id}>
+                                  {user.fullName}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-sm font-medium text-stone-700">Due date</label>
+                            <input
+                              type="date"
+                              value={taskDraft.dueDate}
+                              onChange={(event) =>
+                                setTaskDraft((current) => ({ ...current, dueDate: event.target.value }))
+                              }
+                              className="mt-2 w-full rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none transition focus:border-primary"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-sm font-medium text-stone-700">Status</label>
+                            <select
+                              value={taskDraft.status}
+                              onChange={(event) =>
+                                setTaskDraft((current) => ({
+                                  ...current,
+                                  status: event.target.value as SampleProjectTask["status"],
+                                }))
+                              }
+                              className="mt-2 w-full rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none transition focus:border-primary"
+                            >
+                              <option value="Pending">Pending</option>
+                              <option value="Complete">Complete</option>
+                            </select>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-3">
-                          <span className={`text-sm font-medium ${getDueTextTone(task.dueDate)}`}>
-                            {formatDate(task.dueDate)}
-                          </span>
+                        <div className="mt-4 flex items-center justify-end gap-3">
                           <button
                             type="button"
-                            onClick={() => void toggleTask(task.id)}
-                            className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-                              task.status === "Complete"
-                                ? "bg-stone-200 text-stone-600"
-                                : "bg-primary/10 text-primary"
-                            }`}
+                            onClick={() => {
+                              setIsTaskEditorOpen(false);
+                              setTaskDraft(emptyTaskDraft);
+                            }}
+                            className="rounded-xl border border-stone-200 px-4 py-2.5 text-sm font-medium text-stone-600"
                           >
-                            {task.status}
+                            Cancel
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => void saveTaskDraft()}
+                            className="rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white"
+                          >
+                            Save task
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {filteredTasks.map((task) => (
+                      <div
+                        key={task.id}
+                        className="flex flex-col gap-3 rounded-2xl border border-stone-200 px-4 py-4"
+                      >
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p
+                              className={`font-medium ${
+                                task.status === "Complete"
+                                  ? "text-stone-400 line-through"
+                                  : "text-stone-900"
+                              }`}
+                            >
+                              {task.name}
+                            </p>
+                            <p className="mt-1 text-sm text-stone-500">Assigned to {task.assignedTo}</p>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className={`text-sm font-medium ${getDueTextTone(task.dueDate)}`}>
+                              {formatDate(task.dueDate)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => void toggleTask(task.id)}
+                              className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+                                task.status === "Complete"
+                                  ? "bg-stone-200 text-stone-600"
+                                  : "bg-primary/10 text-primary"
+                              }`}
+                            >
+                              {task.status}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openEditTaskEditor(task)}
+                              className="text-sm font-medium text-primary"
+                            >
+                              Edit
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))}
 
                     <button
                       type="button"
-                      onClick={() =>
-                        setLocalTasks((current) => [
-                          ...current,
-                          {
-                            id: `local-task-${Date.now()}`,
-                            name: "New task",
-                            assignedTo: project.assignedTeam.salesRep,
-                            dueDate: new Date().toISOString(),
-                            status: "Pending",
-                          },
-                        ])
-                      }
+                      onClick={openNewTaskEditor}
                       className="rounded-xl border border-dashed border-primary/40 px-4 py-3 text-sm font-medium text-primary"
                     >
                       Add task
@@ -550,7 +887,9 @@ export default function ProjectDetailPage() {
                 {activeTab === "Documents & Photos" ? (
                   <div className="space-y-5">
                     <div className="flex items-center justify-between">
-                      <p className="text-sm text-stone-500">Upload images or PDFs to keep everything tied to the project.</p>
+                      <p className="text-sm text-stone-500">
+                        Upload images or PDFs to keep everything tied to the project.
+                      </p>
                       <label className="cursor-pointer rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white">
                         Upload
                         <input

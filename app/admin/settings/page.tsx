@@ -40,6 +40,16 @@ const settingsCards = [
     description: "Review plan details, billing contacts, and subscription status.",
     href: "/admin/settings/billing",
   },
+  {
+    title: "Reviews & customer feedback",
+    description: "Configure your review link sent to customers after installation",
+    href: "/admin/settings/reviews",
+  },
+  {
+    title: "Labor & job costing",
+    description: "Set installer hourly rates for automatic job cost calculations",
+    href: "/admin/settings/labor",
+  },
 ] as const;
 
 export default function AdminSettingsPage() {

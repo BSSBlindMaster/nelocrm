@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { getActiveAppUsers, getCurrentAppUser } from "@/lib/current-app-user";
 import { getUserPermissions, hasPermission } from "@/lib/permissions";
 import { supabase } from "@/lib/supabase";
 
@@ -12,6 +13,7 @@ type SidebarProps = {
 type NavItem = {
   label: string;
   href: string;
+  badgeCount?: number;
 };
 
 type AppUserLookup = {
@@ -78,13 +80,18 @@ function NavLink({
   return (
     <Link
       href={item.href}
-      className={`border-l-2 px-3 py-2.5 text-sm transition ${
+      className={`flex items-center justify-between gap-3 border-l-2 px-3 py-2.5 text-sm transition ${
         isActive
           ? "border-[#FF4900] bg-[rgba(255,73,0,0.12)] font-medium text-white"
           : "border-transparent text-[rgba(255,255,255,0.55)] hover:bg-white/5 hover:text-white"
       }`}
     >
-      {item.label}
+      <span>{item.label}</span>
+      {item.badgeCount && item.badgeCount > 0 ? (
+        <span className="inline-flex min-w-[22px] items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[11px] font-semibold text-white">
+          {item.badgeCount}
+        </span>
+      ) : null}
     </Link>
   );
 }
@@ -121,6 +128,8 @@ export function Sidebar({ current }: SidebarProps) {
   const [isLoadingPermissions, setIsLoadingPermissions] = useState(true);
   const [showAllNav, setShowAllNav] = useState(true);
   const [isOwnerRole, setIsOwnerRole] = useState(false);
+  const [overdueProjectsCount, setOverdueProjectsCount] = useState(0);
+  const [todayAppointmentsCount, setTodayAppointmentsCount] = useState(0);
   const [isAdminOpen, setIsAdminOpen] = useState(
     current === "Settings" ||
       current === "Users" ||
@@ -192,6 +201,166 @@ export function Sidebar({ current }: SidebarProps) {
     };
   }, [current]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadOverdueCount() {
+      const [currentUser, activeUsers, projectsResponse] = await Promise.all([
+        getCurrentAppUser(),
+        getActiveAppUsers(),
+        supabase
+          .from("projects")
+          .select(`
+            id,
+            location,
+            project_tasks (
+              id,
+              due_date,
+              due_at,
+              status,
+              assigned_to_user_id,
+              assignee_id,
+              user_id,
+              app_users (
+                id,
+                auth_user_id,
+                location
+              )
+            )
+          `),
+      ]);
+
+      if (!isMounted) {
+        return;
+      }
+
+      const scopedTeamIds = new Set(
+        activeUsers
+          .filter((user) => !currentUser?.location || user.location === currentUser.location)
+          .map((user) => user.id),
+      );
+      const scopedTeamAuthIds = new Set(
+        activeUsers
+          .filter((user) => !currentUser?.location || user.location === currentUser.location)
+          .map((user) => user.authUserId),
+      );
+
+      const overdueCount = (((projectsResponse.data as Array<Record<string, unknown>> | null) ?? []).flatMap(
+        (project) => {
+          const projectLocation = String(project.location ?? "");
+          const tasks = Array.isArray(project.project_tasks)
+            ? (project.project_tasks as Array<Record<string, unknown>>)
+            : [];
+
+          return tasks.filter((task) => {
+            const dueDate = String(task.due_date ?? task.due_at ?? "");
+            const status = String(task.status ?? "pending").toLowerCase();
+            const isComplete = ["complete", "completed", "done"].includes(status);
+            if (isComplete || !dueDate || new Date(dueDate).getTime() >= Date.now()) {
+              return false;
+            }
+
+            if (!currentUser || currentUser.roleName === "Owner" || currentUser.roleName === "Office Manager") {
+              return true;
+            }
+
+            if (currentUser.roleName === "Sales Manager") {
+              const taskUser =
+                task.app_users && !Array.isArray(task.app_users)
+                  ? (task.app_users as Record<string, unknown>)
+                  : null;
+              const assignedId =
+                typeof task.assigned_to_user_id === "string"
+                  ? task.assigned_to_user_id
+                  : typeof task.assignee_id === "string"
+                    ? task.assignee_id
+                    : typeof task.user_id === "string"
+                      ? task.user_id
+                      : typeof taskUser?.id === "string"
+                        ? taskUser.id
+                        : "";
+              const assignedAuthId =
+                typeof taskUser?.auth_user_id === "string" ? taskUser.auth_user_id : "";
+              const assignedLocation =
+                typeof taskUser?.location === "string" ? taskUser.location : projectLocation;
+
+              return (
+                (!!assignedId && scopedTeamIds.has(assignedId)) ||
+                (!!assignedAuthId && scopedTeamAuthIds.has(assignedAuthId)) ||
+                (!!assignedLocation && assignedLocation === currentUser.location)
+              );
+            }
+
+            const taskUser =
+              task.app_users && !Array.isArray(task.app_users)
+                ? (task.app_users as Record<string, unknown>)
+                : null;
+            const assignedId =
+              typeof task.assigned_to_user_id === "string"
+                ? task.assigned_to_user_id
+                : typeof task.assignee_id === "string"
+                  ? task.assignee_id
+                  : typeof task.user_id === "string"
+                    ? task.user_id
+                    : typeof taskUser?.id === "string"
+                      ? taskUser.id
+                      : "";
+            const assignedAuthId =
+              typeof taskUser?.auth_user_id === "string" ? taskUser.auth_user_id : "";
+
+            return assignedId === currentUser.id || assignedAuthId === currentUser.authUserId;
+          });
+        },
+      )).length;
+
+      setOverdueProjectsCount(overdueCount);
+    }
+
+    void loadOverdueCount();
+    const intervalId = window.setInterval(() => {
+      void loadOverdueCount();
+    }, 5 * 60 * 1000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadTodayAppointments() {
+      const currentUser = await getCurrentAppUser();
+      const today = new Date().toISOString().slice(0, 10);
+
+      const { data } = await supabase
+        .from("appointments")
+        .select("id, rep_user_id, date")
+        .eq("date", today);
+
+      if (!isMounted) {
+        return;
+      }
+
+      const rows = (data as Array<{ rep_user_id?: string | null }> | null) ?? [];
+      const count = currentUser
+        ? rows.filter((appointment) => appointment.rep_user_id === currentUser.id).length
+        : rows.length;
+      setTodayAppointmentsCount(count);
+    }
+
+    void loadTodayAppointments();
+    const intervalId = window.setInterval(() => {
+      void loadTodayAppointments();
+    }, 5 * 60 * 1000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
   const effectivePermissions = useMemo(() => {
     if (showAllNav || isOwnerRole) {
       return ALL_PERMISSION_KEYS;
@@ -224,7 +393,7 @@ export function Sidebar({ current }: SidebarProps) {
         "orders.manage",
       ])
     ) {
-      items.push({ label: "Projects", href: "/projects" });
+      items.push({ label: "Projects", href: "/projects", badgeCount: overdueProjectsCount });
     }
 
     if (
@@ -247,7 +416,7 @@ export function Sidebar({ current }: SidebarProps) {
     }
 
     if (hasPermission(effectivePermissions, "calendar.view")) {
-      items.push({ label: "Calendar", href: "/calendar" });
+      items.push({ label: "Calendar", href: "/calendar", badgeCount: todayAppointmentsCount });
     }
 
     if (
@@ -260,7 +429,7 @@ export function Sidebar({ current }: SidebarProps) {
     }
 
     return items;
-  }, [effectivePermissions]);
+  }, [effectivePermissions, todayAppointmentsCount]);
 
   const marketingItems = useMemo(() => {
     if (
@@ -297,7 +466,7 @@ export function Sidebar({ current }: SidebarProps) {
         "kpi.view_all",
       ])
     ) {
-      items.push({ label: "KPIs", href: "/team/kpis" });
+      items.push({ label: "KPIs", href: "/kpis" });
     }
 
     return items;
