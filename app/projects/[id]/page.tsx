@@ -28,6 +28,15 @@ import { supabase } from "@/lib/supabase";
 type ProjectTab = "Tasks" | "Quote" | "Payments" | "Documents & Photos" | "Activity log";
 type TaskFilter = "all" | "mine" | "pending" | "complete";
 
+type CommissionRecord = {
+  id: string;
+  commission_amount: number;
+  payment_part: number;
+  payment_label: string;
+  status: string;
+  app_users: { first_name: string; last_name: string } | null;
+};
+
 type TaskDraft = {
   id: string | null;
   name: string;
@@ -319,6 +328,7 @@ export default function ProjectDetailPage() {
   const [status, setStatus] = useState<SampleProject["status"]>("Active");
   const [isTaskEditorOpen, setIsTaskEditorOpen] = useState(false);
   const [taskDraft, setTaskDraft] = useState<TaskDraft>(emptyTaskDraft);
+  const [projectCommissions, setProjectCommissions] = useState<CommissionRecord[]>([]);
 
   useEffect(() => {
     async function loadProject() {
@@ -394,6 +404,15 @@ export default function ProjectDetailPage() {
       setLocalTasks(normalized.tasks);
       setLocalDocuments(normalized.documents);
       setStatus(normalized.status);
+
+      // Load commissions for this project
+      const { data: commData } = await supabase
+        .from("commissions")
+        .select("id, commission_amount, payment_part, payment_label, status, app_users ( first_name, last_name )")
+        .eq("project_id", projectId)
+        .order("payment_part", { ascending: true });
+
+      setProjectCommissions((commData as CommissionRecord[] | null) ?? []);
       setIsLoading(false);
     }
 
@@ -1008,6 +1027,58 @@ export default function ProjectDetailPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Commission card — only for Owner and Sales Manager */}
+              {projectCommissions.length > 0 &&
+                (currentUser?.roleName === "Owner" || currentUser?.roleName === "Sales Manager") && (
+                <div className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm">
+                  <h2 className="text-lg font-semibold tracking-tight text-stone-950">Commission</h2>
+                  <div className="mt-4 space-y-2 text-sm text-stone-600">
+                    {/* Rep name */}
+                    {projectCommissions[0]?.app_users && (
+                      <p className="font-medium text-stone-900">
+                        {[projectCommissions[0].app_users.first_name, projectCommissions[0].app_users.last_name]
+                          .filter(Boolean)
+                          .join(" ")}
+                      </p>
+                    )}
+                    {projectCommissions.filter((c) => c.payment_part > 0).map((c) => {
+                      const badgeClass =
+                        c.status === "earned" || c.status === "paid"
+                          ? "bg-emerald-100 text-emerald-700"
+                          : c.status === "pending_install"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-stone-100 text-stone-600";
+                      const label = c.status.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+                      return (
+                        <div key={c.id} className="flex items-center justify-between">
+                          <span>{c.payment_part === 1 ? "Sale commission" : "Install commission"}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-stone-900">{formatCurrency(c.commission_amount)}</span>
+                            <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${badgeClass}`}>
+                              {label}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {/* Deductions */}
+                    {projectCommissions.filter((c) => c.payment_part === 0).map((c) => (
+                      <div key={c.id} className="flex items-center justify-between text-rose-600">
+                        <span>Remake deduction</span>
+                        <span className="font-semibold">{formatCurrency(c.commission_amount)}</span>
+                      </div>
+                    ))}
+                    {/* Total */}
+                    <div className="flex items-center justify-between border-t border-stone-200 pt-2 text-base font-semibold text-stone-900">
+                      <span>Total commission</span>
+                      <span>
+                        {formatCurrency(projectCommissions.reduce((s, c) => s + c.commission_amount, 0))}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm">
                 <h2 className="text-lg font-semibold tracking-tight text-stone-950">Assigned team</h2>

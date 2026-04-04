@@ -2,19 +2,15 @@ export async function geocodeAddress(
   address: string,
 ): Promise<{ lat: number; lng: number } | null> {
   const token = process.env.NEXT_PUBLIC_MAPBOX_KEY;
-  if (!token || !address) {
-    return null;
-  }
+  if (!token) return null;
 
   const encoded = encodeURIComponent(address);
   const response = await fetch(
     `https://api.mapbox.com/geocoding/v5/mapbox.places/${encoded}.json?access_token=${token}&country=US&limit=1`,
   );
-  const data = (await response.json()) as {
-    features?: Array<{ center?: [number, number] }>;
-  };
+  const data = await response.json();
 
-  if (data.features && data.features.length > 0 && data.features[0].center) {
+  if (data.features && data.features.length > 0) {
     const [lng, lat] = data.features[0].center;
     return { lat, lng };
   }

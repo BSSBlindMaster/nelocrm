@@ -50,6 +50,8 @@ const ALL_PERMISSION_KEYS = [
   "admin.settings",
   "admin.catalog",
   "admin.marketing_spend",
+  "commissions.view_all",
+  "commissions.view_own",
 ];
 
 function hasAnyPermission(userPerms: string[], keys: string[]) {
@@ -128,10 +130,11 @@ export function Sidebar({ current }: SidebarProps) {
   const [isLoadingPermissions, setIsLoadingPermissions] = useState(true);
   const [showAllNav, setShowAllNav] = useState(true);
   const [isOwnerRole, setIsOwnerRole] = useState(false);
-  const [currentRoleName, setCurrentRoleName] = useState("");
   const [overdueProjectsCount, setOverdueProjectsCount] = useState(0);
   const [todayAppointmentsCount, setTodayAppointmentsCount] = useState(0);
   const [unassignedJobsCount, setUnassignedJobsCount] = useState(0);
+  const [earnedCommissionsCount, setEarnedCommissionsCount] = useState(0);
+  const [currentRoleName, setCurrentRoleName] = useState("");
   const [isAdminOpen, setIsAdminOpen] = useState(
     current === "Settings" ||
       current === "Users" ||
@@ -155,7 +158,6 @@ export function Sidebar({ current }: SidebarProps) {
 
       if (!authUserId) {
         setShowAllNav(true);
-        setCurrentRoleName("");
         setIsLoadingPermissions(false);
         return;
       }
@@ -174,7 +176,6 @@ export function Sidebar({ current }: SidebarProps) {
 
       if (!resolvedUser) {
         setShowAllNav(true);
-        setCurrentRoleName("");
         setIsLoadingPermissions(false);
         return;
       }
@@ -336,50 +337,6 @@ export function Sidebar({ current }: SidebarProps) {
   useEffect(() => {
     let isMounted = true;
 
-    async function loadUnassignedJobs() {
-      const currentUser = await getCurrentAppUser();
-
-      if (!isMounted) {
-        return;
-      }
-
-      if (!currentUser || !["Owner", "Office Manager"].includes(currentUser.roleName)) {
-        setUnassignedJobsCount(0);
-        return;
-      }
-
-      const today = new Date().toISOString().slice(0, 10);
-      const start = `${today}T00:00:00.000Z`;
-      const end = `${today}T23:59:59.999Z`;
-
-      const { data, count } = await supabase
-        .from("jobs")
-        .select("id", { count: "exact", head: false })
-        .gte("scheduled_at", start)
-        .lte("scheduled_at", end)
-        .is("assigned_to", null);
-
-      if (!isMounted) {
-        return;
-      }
-
-      setUnassignedJobsCount(count ?? data?.length ?? 0);
-    }
-
-    void loadUnassignedJobs();
-    const intervalId = window.setInterval(() => {
-      void loadUnassignedJobs();
-    }, 5 * 60 * 1000);
-
-    return () => {
-      isMounted = false;
-      window.clearInterval(intervalId);
-    };
-  }, []);
-
-  useEffect(() => {
-    let isMounted = true;
-
     async function loadTodayAppointments() {
       const currentUser = await getCurrentAppUser();
       const today = new Date().toISOString().slice(0, 10);
@@ -403,6 +360,57 @@ export function Sidebar({ current }: SidebarProps) {
     void loadTodayAppointments();
     const intervalId = window.setInterval(() => {
       void loadTodayAppointments();
+    }, 5 * 60 * 1000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadUnassignedJobs() {
+      const today = new Date().toISOString().slice(0, 10);
+      const { count } = await supabase
+        .from("jobs")
+        .select("id", { count: "exact", head: true })
+        .is("assigned_to", null)
+        .gte("scheduled_at", `${today}T00:00:00`)
+        .lte("scheduled_at", `${today}T23:59:59`);
+
+      if (!isMounted) return;
+      setUnassignedJobsCount(count ?? 0);
+    }
+
+    void loadUnassignedJobs();
+    const intervalId = window.setInterval(() => {
+      void loadUnassignedJobs();
+    }, 5 * 60 * 1000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadEarnedCommissions() {
+      const { count } = await supabase
+        .from("commissions")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "earned");
+
+      if (!isMounted) return;
+      setEarnedCommissionsCount(count ?? 0);
+    }
+
+    void loadEarnedCommissions();
+    const intervalId = window.setInterval(() => {
+      void loadEarnedCommissions();
     }, 5 * 60 * 1000);
 
     return () => {
@@ -475,17 +483,32 @@ export function Sidebar({ current }: SidebarProps) {
         "dispatch.manage",
       ])
     ) {
+      const showDispatchBadge = isOwnerRole || effectivePermissions.includes("dispatch.manage");
       items.push({
         label: "Dispatch",
         href: "/dispatch",
-        badgeCount: ["Owner", "Office Manager"].includes(currentRoleName)
-          ? unassignedJobsCount
-          : undefined,
+        badgeCount: showDispatchBadge ? unassignedJobsCount : undefined,
+      });
+    }
+
+    // Commissions — Owner and Sales Manager see management view with badge;
+    // Sales Reps see their own view without badge
+    if (
+      hasAnyPermission(effectivePermissions, [
+        "commissions.view_all",
+        "commissions.view_own",
+      ])
+    ) {
+      const isManagerOrOwner = isOwnerRole || currentRoleName === "Sales Manager";
+      items.push({
+        label: "Commissions",
+        href: isManagerOrOwner ? "/commissions" : "/commissions/my",
+        badgeCount: isManagerOrOwner ? earnedCommissionsCount : undefined,
       });
     }
 
     return items;
-  }, [currentRoleName, effectivePermissions, todayAppointmentsCount, unassignedJobsCount]);
+  }, [effectivePermissions, todayAppointmentsCount, unassignedJobsCount, isOwnerRole, earnedCommissionsCount, currentRoleName]);
 
   const marketingItems = useMemo(() => {
     if (
