@@ -40,11 +40,17 @@ export default function PricingSettingsPage() {
   const [desiredNetProfit, setDesiredNetProfit] = useState("20");
   const [operatingExpenses, setOperatingExpenses] = useState("35");
   const [statusMessage, setStatusMessage] = useState("");
+  const [settingsId, setSettingsId] = useState<string | null>(null);
+  const [taxRate, setTaxRate] = useState("8.3");
+  const [depositPercentage, setDepositPercentage] = useState("70");
+  const [paymentTerms, setPaymentTerms] = useState(
+    "70% deposit due at signing. Balance due upon completion of installation.",
+  );
 
   useEffect(() => {
     async function loadPricingSettings() {
       const now = new Date();
-      const [manufacturerResponse, pricingResponse, rulesResponse, goalResponse] = await Promise.all([
+      const [manufacturerResponse, pricingResponse, rulesResponse, goalResponse, settingsResponse] = await Promise.all([
         supabase.from("manufacturers").select("id, name").order("name"),
         supabase.from("pricing_settings").select("manufacturer_id, cost_factor, default_margin, minimum_margin"),
         supabase.from("shipping_rules").select("*").order("created_at", { ascending: true }),
@@ -54,7 +60,16 @@ export default function PricingSettingsPage() {
           .eq("year", now.getFullYear())
           .eq("month", now.getMonth() + 1)
           .maybeSingle(),
+        supabase.from("business_settings").select("id, tax_rate, deposit_percentage, payment_terms").limit(1).maybeSingle(),
       ]);
+
+      const bs = settingsResponse.data as Record<string, unknown> | null;
+      if (bs) {
+        setSettingsId(String(bs.id ?? ""));
+        if (bs.tax_rate != null) setTaxRate(String(Number(bs.tax_rate) * 100));
+        if (bs.deposit_percentage != null) setDepositPercentage(String(Number(bs.deposit_percentage)));
+        if (typeof bs.payment_terms === "string") setPaymentTerms(bs.payment_terms);
+      }
 
       const nextManufacturers = (manufacturerResponse.data as ManufacturerRow[] | null) ?? [];
       setManufacturers(nextManufacturers);
@@ -180,6 +195,74 @@ export default function PricingSettingsPage() {
         />
 
         <div className="space-y-6 p-8">
+          {/* Tax settings */}
+          <section className="rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold tracking-tight text-stone-950">Tax settings</h2>
+            <div className="mt-5 max-w-sm">
+              <label className="text-sm font-medium text-stone-700">Tax rate (%)</label>
+              <div className="mt-2 flex items-center rounded-2xl border border-stone-200 bg-white px-4">
+                <input
+                  value={taxRate}
+                  onChange={(e) => setTaxRate(e.target.value)}
+                  className="min-h-12 w-full px-2 text-sm outline-none"
+                />
+                <span className="text-sm text-stone-500">%</span>
+              </div>
+              <p className="mt-2 text-sm text-stone-500">
+                Applied to all quotes. Both Mesa locations charge Mesa rate.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!settingsId) return;
+                await supabase.from("business_settings").update({ tax_rate: Number(taxRate) / 100 }).eq("id", settingsId);
+                setStatusMessage("Tax rate saved.");
+              }}
+              className="mt-4 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white"
+            >
+              Save
+            </button>
+          </section>
+
+          {/* Payment terms */}
+          <section className="rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold tracking-tight text-stone-950">Payment terms</h2>
+            <div className="mt-5 space-y-5 max-w-lg">
+              <div>
+                <label className="text-sm font-medium text-stone-700">Deposit percentage</label>
+                <div className="mt-2 flex items-center rounded-2xl border border-stone-200 bg-white px-4">
+                  <input
+                    value={depositPercentage}
+                    onChange={(e) => setDepositPercentage(e.target.value)}
+                    className="min-h-12 w-full px-2 text-sm outline-none"
+                  />
+                  <span className="text-sm text-stone-500">%</span>
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-stone-700">Payment terms text</label>
+                <textarea
+                  value={paymentTerms}
+                  onChange={(e) => setPaymentTerms(e.target.value)}
+                  rows={3}
+                  className="mt-2 w-full rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none transition focus:border-primary"
+                />
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!settingsId) return;
+                await supabase.from("business_settings").update({ deposit_percentage: Number(depositPercentage), payment_terms: paymentTerms }).eq("id", settingsId);
+                setStatusMessage("Payment terms saved.");
+              }}
+              className="mt-4 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white"
+            >
+              Save
+            </button>
+          </section>
+
           <section className="rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold tracking-tight text-stone-950">Per manufacturer settings</h2>
             <div className="mt-5 overflow-x-auto">

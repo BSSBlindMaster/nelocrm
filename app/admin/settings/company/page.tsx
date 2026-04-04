@@ -55,7 +55,7 @@ export default function CompanyProfilePage() {
         primary_email: record.primary_email || "",
         website_url: record.website_url || "",
         company_logo_url: record.company_logo_url || "",
-        ellsworth_address: record.ellsworth_address || "",
+        ellsworth_address: record.ellsworth_address || "1035 N. Ellsworth Rd., Suite 102, Mesa, AZ 85207",
         ellsworth_phone: record.ellsworth_phone || "",
         ellsworth_email: record.ellsworth_email || "",
         lindsay_address: record.lindsay_address || "",
