@@ -22,6 +22,7 @@ import {
   type SampleProjectTask,
   type SampleQuoteLine,
 } from "@/lib/project-samples";
+import { normalizeJobNumber } from "@/lib/nelo-format";
 import { supabase } from "@/lib/supabase";
 
 type ProjectTab = "Tasks" | "Quote" | "Payments" | "Documents & Photos" | "Activity log";
@@ -71,6 +72,11 @@ function getDueTextTone(date: string) {
   }
 
   return "text-emerald-600";
+}
+
+function formatCostWithPercent(amount: number, saleAmount: number) {
+  const percent = saleAmount > 0 ? (amount / saleAmount) * 100 : 0;
+  return `${formatCurrency(amount)} (${percent.toFixed(1)}%)`;
 }
 
 function getCustomerName(record: Record<string, unknown> | null | undefined) {
@@ -209,7 +215,7 @@ function mapRecordToProject(
 
   return {
     id: String(project.id),
-    jobNumber: String(project.job_number ?? `PO${new Date().getFullYear()}-0000`),
+    jobNumber: normalizeJobNumber(String(project.job_number ?? `PO${String(new Date().getFullYear()).slice(-2)}-0000`)),
     customerId: String(project.customer_id ?? ""),
     customerName: getCustomerName(customer),
     address:
@@ -433,6 +439,12 @@ export default function ProjectDetailPage() {
     () => project?.payments.reduce((sum, payment) => sum + payment.amount, 0) ?? 0,
     [project],
   );
+  const totalCost = project
+    ? project.costing.cogs + project.costing.labor + project.costing.commission
+    : 0;
+  const grossMargin = project && project.totalAmount > 0 ? project.costing.grossProfit / project.totalAmount : 0;
+  const grossMarginTone =
+    grossMargin >= 0.5 ? "text-[#2DA44E]" : grossMargin >= 0.35 ? "text-[#BA7517]" : "text-[#A32D2D]";
 
   function openNewTaskEditor() {
     setTaskDraft({
@@ -970,19 +982,29 @@ export default function ProjectDetailPage() {
                 <div className="mt-4 space-y-2 text-sm text-stone-600">
                   <div className="flex items-center justify-between">
                     <span>COGS</span>
-                    <span>{formatCurrency(project.costing.cogs)}</span>
+                    <span>{formatCostWithPercent(project.costing.cogs, project.totalAmount)}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span>Labor</span>
-                    <span>{formatCurrency(project.costing.labor)}</span>
+                    <span>{formatCostWithPercent(project.costing.labor, project.totalAmount)}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span>Commission</span>
-                    <span>{formatCurrency(project.costing.commission)}</span>
+                    <span>{formatCostWithPercent(project.costing.commission, project.totalAmount)}</span>
                   </div>
-                  <div className="flex items-center justify-between border-t border-stone-200 pt-3 font-medium text-stone-900">
+                  <div className="flex items-center justify-between">
+                    <span>Total cost</span>
+                    <span>{formatCostWithPercent(totalCost, project.totalAmount)}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-stone-200 pt-3 text-base font-semibold text-stone-900">
                     <span>Gross profit</span>
-                    <span>{formatCurrency(project.costing.grossProfit)}</span>
+                    <span>{formatCostWithPercent(project.costing.grossProfit, project.totalAmount)}</span>
+                  </div>
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="text-sm font-medium text-stone-700">Gross margin</span>
+                    <span className={`text-xl font-semibold ${grossMarginTone}`}>
+                      {(grossMargin * 100).toFixed(1)}%
+                    </span>
                   </div>
                 </div>
               </div>

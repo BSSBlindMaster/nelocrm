@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CurrentAppUser } from "@/lib/current-app-user";
+import { normalizeJobNumber } from "@/lib/nelo-format";
 import type { SampleProject } from "@/lib/project-samples";
 import { supabase } from "@/lib/supabase";
 
@@ -426,7 +427,7 @@ export function InstallerView({ project, projectId, currentUser }: InstallerView
         </div>
 
         <section className="rounded-[28px] border border-stone-200 bg-white p-5 shadow-sm">
-          <p className="font-mono text-2xl font-semibold text-primary">{project.jobNumber}</p>
+          <p className="font-mono text-2xl font-semibold text-primary">{normalizeJobNumber(project.jobNumber)}</p>
           <h1 className="mt-3 text-2xl font-semibold text-stone-950">{project.customerName}</h1>
           <a
             href={mapUrlForAddress(project.address)}

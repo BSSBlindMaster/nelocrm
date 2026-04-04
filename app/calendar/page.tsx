@@ -475,6 +475,70 @@ export default function CalendarPage() {
     void loadCalendarData();
   }, []);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadMonthAvailability() {
+      const monthStart = new Date(displayMonth.getFullYear(), displayMonth.getMonth(), 1);
+      const monthEnd = new Date(displayMonth.getFullYear(), displayMonth.getMonth() + 1, 0);
+
+      const { data } = await supabase
+        .from("appointment_slots")
+        .select(`
+          *,
+          app_users (
+            id,
+            first_name,
+            last_name
+          )
+        `)
+        .gte("date", toDateKey(monthStart))
+        .lte("date", toDateKey(monthEnd));
+
+      if (!isMounted) {
+        return;
+      }
+
+      const nextSlots = ((data as Array<Record<string, unknown>> | null) ?? []).map((slot) => {
+        const rep =
+          slot.app_users && !Array.isArray(slot.app_users)
+            ? (slot.app_users as Record<string, unknown>)
+            : null;
+        return {
+          id: String(slot.id),
+          date: String(slot.date),
+          slot: String(slot.slot) as AppointmentSlotKey,
+          location: String(slot.location ?? "Ellsworth"),
+          status: String(slot.status ?? "open"),
+          repUserId: String(slot.rep_user_id ?? rep?.id ?? ""),
+          repName:
+            [rep?.first_name, rep?.last_name]
+              .filter((value) => typeof value === "string" && value)
+              .join(" ") || "Sales rep",
+        } satisfies AvailabilitySlot;
+      });
+
+      if (nextSlots.length > 0) {
+        setAvailabilitySlots((current) => {
+          const otherMonths = current.filter((slot) => {
+            const slotDate = new Date(slot.date);
+            return (
+              slotDate.getFullYear() !== displayMonth.getFullYear() ||
+              slotDate.getMonth() !== displayMonth.getMonth()
+            );
+          });
+          return [...otherMonths, ...nextSlots];
+        });
+      }
+    }
+
+    void loadMonthAvailability();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [displayMonth]);
+
   const installers = useMemo(
     () => users.filter((user) => user.roleName === "Installer"),
     [users],
@@ -513,6 +577,22 @@ export default function CalendarPage() {
       return accumulator;
     }, {});
   }, [availabilitySlots]);
+
+  const availabilityDotsByDate = useMemo(() => {
+    return Object.fromEntries(
+      Object.entries(availabilityByDate).map(([date, slots]) => {
+        const slotMap = new Map<AppointmentSlotKey, string>();
+        slots.forEach((slot) => {
+          if (slot.status === "booked") {
+            slotMap.set(slot.slot, "booked");
+          } else if (!slotMap.has(slot.slot)) {
+            slotMap.set(slot.slot, "open");
+          }
+        });
+        return [date, Array.from(slotMap.entries())];
+      }),
+    ) as Record<string, Array<[AppointmentSlotKey, string]>>;
+  }, [availabilityByDate]);
 
   const installJobsByCell = useMemo(() => {
     return installJobs.reduce<Record<string, InstallJob[]>>((accumulator, job) => {
@@ -809,8 +889,8 @@ export default function CalendarPage() {
                 <div className={`mt-6 grid gap-3 ${appointmentView === "month" ? "md:grid-cols-6" : "md:grid-cols-6"}`}>
                   {appointmentDayList.map((day) => {
                     const dateKey = toDateKey(day);
-                    const dayAppointments = appointmentCountsByDate[dateKey] ?? [];
                     const dayAvailability = availabilityByDate[dateKey] ?? [];
+                    const dayDots = availabilityDotsByDate[dateKey] ?? [];
                     return (
                       <button
                         key={dateKey}
@@ -838,11 +918,19 @@ export default function CalendarPage() {
                           ) : null}
                         </div>
                         <div className="mt-3 flex flex-wrap gap-1">
-                          {dayAppointments.map((appointment) => (
+                          {dayDots.map(([slotKey, slotStatus]) => (
                             <span
-                              key={appointment.id}
-                              className={`h-2.5 w-2.5 rounded-full ${getSlotColor(appointment.slot)}`}
-                              title={`${appointment.repName} · ${appointment.slot}`}
+                              key={`${dateKey}-${slotKey}-${slotStatus}`}
+                              className={`h-2.5 w-2.5 rounded-full ${
+                                slotStatus === "booked"
+                                  ? "bg-stone-400"
+                                  : slotKey === "AM"
+                                    ? "bg-sky-500"
+                                    : slotKey === "MID"
+                                      ? "bg-amber-500"
+                                      : "bg-emerald-500"
+                              }`}
+                              title={`${slotKey} · ${slotStatus === "booked" ? "Booked" : "Available"}`}
                             />
                           ))}
                         </div>

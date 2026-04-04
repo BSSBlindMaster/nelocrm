@@ -130,7 +130,8 @@ CREATE TABLE business_settings (
   sidebar_color TEXT DEFAULT '#1C1C1C',
   tax_rate NUMERIC DEFAULT 0.0875,
   default_shipping NUMERIC DEFAULT 300,
-  default_installation NUMERIC DEFAULT 0
+  default_installation NUMERIC DEFAULT 0,
+  terms_and_conditions TEXT
 );
 
 -- Pricing settings
@@ -197,3 +198,28 @@ BEGIN
   RETURN QUERY SELECT v_msrp_base, v_surcharges, v_msrp_total, v_cost, v_sell;
 END;
 $$;
+
+-- Job number sequence
+CREATE TABLE IF NOT EXISTS job_number_sequence (
+  year INTEGER PRIMARY KEY,
+  last_sequence INTEGER DEFAULT 0
+);
+
+-- Job number trigger function
+CREATE OR REPLACE FUNCTION generate_job_number()
+RETURNS TRIGGER AS $$
+DECLARE
+  current_year TEXT := TO_CHAR(NOW(), 'YY');
+  current_year_int INTEGER := EXTRACT(YEAR FROM NOW())::INTEGER;
+  next_seq INTEGER;
+BEGIN
+  INSERT INTO job_number_sequence (year, last_sequence)
+  VALUES (current_year_int, 1)
+  ON CONFLICT (year) DO UPDATE
+  SET last_sequence = job_number_sequence.last_sequence + 1
+  RETURNING last_sequence INTO next_seq;
+
+  NEW.job_number := 'PO' || current_year || '-' || LPAD(next_seq::TEXT, 4, '0');
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;

@@ -100,7 +100,7 @@ export type SampleProject = {
 export const sampleProjects: SampleProject[] = [
   {
     id: "sample-project-1",
-    jobNumber: "PO2026-1042",
+    jobNumber: normalizeJobNumber("PO2026-1042"),
     customerId: "sample-customer-1",
     customerName: "Carter Residence",
     address: "245 S Main St, Ellsworth, KS 67439",
@@ -166,7 +166,7 @@ export const sampleProjects: SampleProject[] = [
   },
   {
     id: "sample-project-2",
-    jobNumber: "PO2026-1041",
+    jobNumber: normalizeJobNumber("PO2026-1041"),
     customerId: "sample-customer-2",
     customerName: "Lindsay Orthodontics",
     address: "118 N Pine Ave, Lindsay, OK 73052",
@@ -221,7 +221,7 @@ export const sampleProjects: SampleProject[] = [
   },
   {
     id: "sample-project-3",
-    jobNumber: "PO2026-1039",
+    jobNumber: normalizeJobNumber("PO2026-1039"),
     customerId: "sample-customer-3",
     customerName: "Miller Repair Call",
     address: "487 Oak Crest Dr, Ellsworth, KS 67439",
@@ -276,3 +276,4 @@ export const sampleProjects: SampleProject[] = [
 export function getSampleProjectById(id: string) {
   return sampleProjects.find((project) => project.id === id) ?? null;
 }
+import { normalizeJobNumber } from "@/lib/nelo-format";

@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { Topbar } from "@/components/Topbar";
 import { getActiveAppUsers, getCurrentAppUser, type ActiveAppUser, type CurrentAppUser } from "@/lib/current-app-user";
+import { normalizeJobNumber } from "@/lib/nelo-format";
 import { sampleProjects } from "@/lib/project-samples";
 import { supabase } from "@/lib/supabase";
 
@@ -171,7 +172,7 @@ function getProjectTypeTone(projectType: string) {
 }
 
 function createJobNumber() {
-  const year = new Date().getFullYear();
+  const year = String(new Date().getFullYear()).slice(-2);
   const digits = Math.floor(1000 + Math.random() * 9000);
   return `PO${year}-${digits}`;
 }
@@ -221,7 +222,7 @@ function getTaskSummary(tasks: ProjectTaskInfo[]) {
 function mapSampleProjects(): ProjectRow[] {
   return sampleProjects.map((project) => ({
     id: project.id,
-    jobNumber: project.jobNumber,
+    jobNumber: normalizeJobNumber(project.jobNumber),
     customerName: project.customerName,
     address: project.address,
     projectType: project.projectType,
@@ -410,7 +411,7 @@ export default function ProjectsPage() {
 
           return {
             id: String(project.id),
-            jobNumber: String(project.job_number ?? createJobNumber()),
+            jobNumber: normalizeJobNumber(String(project.job_number ?? createJobNumber())),
             customerName: getCustomerName(
               project.customers && !Array.isArray(project.customers)
                 ? (project.customers as Record<string, unknown>)

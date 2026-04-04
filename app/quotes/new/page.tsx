@@ -2,14 +2,17 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { Topbar } from "@/components/Topbar";
+import { FRACTION_OPTIONS, fractionToNumber, formatMeasurement, type FractionValue } from "@/lib/nelo-format";
 import { supabase } from "@/lib/supabase";
 
 type Customer = {
   id: string;
   name: string;
+  first_name?: string | null;
+  last_name?: string | null;
   phone: string | null;
   address: string | null;
   city: string | null;
@@ -46,6 +49,7 @@ type BusinessSettings = {
   default_shipping: number | null;
   default_installation: number | null;
   tax_rate: number | null;
+  terms_and_conditions?: string | null;
 };
 
 type PricingSettings = {
@@ -55,8 +59,6 @@ type PricingSettings = {
   cost_factor: number;
 };
 
-type FractionOption = "0" | "1/8" | "2/8" | "3/8" | "4/8" | "5/8" | "6/8" | "7/8";
-
 type QuoteFormState = {
   room: string;
   manufacturerId: string;
@@ -65,9 +67,9 @@ type QuoteFormState = {
   liftOptionId: string;
   mountType: "Inside mount" | "Outside mount" | "";
   widthWhole: string;
-  widthFraction: FractionOption;
+  widthFraction: FractionValue;
   heightWhole: string;
-  heightFraction: FractionOption;
+  heightFraction: FractionValue;
   quantity: string;
   notes: string;
 };
@@ -86,9 +88,9 @@ type LineItem = {
   liftOptionName: string;
   mountType: "Inside mount" | "Outside mount";
   widthWhole: number;
-  widthFraction: FractionOption;
+  widthFraction: FractionValue;
   heightWhole: number;
-  heightFraction: FractionOption;
+  heightFraction: FractionValue;
   quantity: number;
   notes: string;
   msrpBase: number;
@@ -96,7 +98,6 @@ type LineItem = {
   msrpTotal: number;
   costFactor: number;
   costPrice: number;
-  margin: number;
   sellPrice: number;
   lineTotal: number;
 };
@@ -108,17 +109,6 @@ type PriceResult = {
   cost_price: number | null;
   sell_price: number | null;
 };
-
-const fractionOptions: FractionOption[] = [
-  "0",
-  "1/8",
-  "2/8",
-  "3/8",
-  "4/8",
-  "5/8",
-  "6/8",
-  "7/8",
-];
 
 const emptyForm: QuoteFormState = {
   room: "",
@@ -143,23 +133,15 @@ function formatCurrency(value: number) {
   }).format(value);
 }
 
-function getFractionValue(fraction: FractionOption) {
-  if (fraction === "0") {
-    return 0;
-  }
-
-  return Number(fraction.split("/")[0]) / 8;
-}
-
-function toDimension(whole: string, fraction: FractionOption) {
+function toDimension(whole: string, fraction: FractionValue) {
   const wholeNumber = Number(whole || 0);
-  return wholeNumber + getFractionValue(fraction);
+  return wholeNumber + fractionToNumber(fraction);
 }
 
 function buildQuoteNumber() {
   const now = new Date();
   const datePart = [
-    now.getFullYear(),
+    String(now.getFullYear()).slice(-2),
     String(now.getMonth() + 1).padStart(2, "0"),
     String(now.getDate()).padStart(2, "0"),
   ].join("");
@@ -171,6 +153,14 @@ function formatAddress(customer: Customer) {
   return [customer.address, customer.city, customer.state, customer.zip]
     .filter(Boolean)
     .join(", ");
+}
+
+function getCustomerDisplayName(customer: Customer) {
+  return (
+    customer.name ||
+    [customer.first_name, customer.last_name].filter(Boolean).join(" ") ||
+    "Customer"
+  );
 }
 
 function StepLabel({ step, label }: { step: number; label: string }) {
@@ -203,11 +193,21 @@ export default function NewQuotePage() {
   const [installation, setInstallation] = useState("0");
   const [discountType, setDiscountType] = useState<"percent" | "amount">("percent");
   const [discountValue, setDiscountValue] = useState("0");
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
   const [priceResult, setPriceResult] = useState<PriceResult | null>(null);
   const [pricingError, setPricingError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [isLoadingData, setIsLoadingData] = useState(true);
+  const [savedQuoteId, setSavedQuoteId] = useState<string | null>(null);
+  const [agreementName, setAgreementName] = useState("");
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [agreedToDisclaimer, setAgreedToDisclaimer] = useState(false);
+  const [signatureError, setSignatureError] = useState("");
+  const [signatureSuccess, setSignatureSuccess] = useState("");
+  const [isSavingSignature, setIsSavingSignature] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const drawingRef = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -226,7 +226,7 @@ export default function NewQuotePage() {
       ] = await Promise.all([
         supabase
           .from("customers")
-          .select("id, name, phone, address, city, state, zip")
+          .select("id, name, first_name, last_name, phone, address, city, state, zip")
           .order("name"),
         supabase.from("manufacturers").select("id, name").eq("active", true).order("name"),
         supabase.from("products").select("id, manufacturer_id, name").eq("active", true).order("name"),
@@ -240,7 +240,7 @@ export default function NewQuotePage() {
           .order("name"),
         supabase
           .from("business_settings")
-          .select("default_shipping, default_installation, tax_rate")
+          .select("default_shipping, default_installation, tax_rate, terms_and_conditions")
           .limit(1)
           .maybeSingle(),
         supabase
@@ -324,6 +324,10 @@ export default function NewQuotePage() {
   const selectedPricingSettings = pricingSettings.find(
     (pricing) => pricing.manufacturer_id === form.manufacturerId,
   );
+
+  useEffect(() => {
+    setAgreementName(selectedCustomer ? getCustomerDisplayName(selectedCustomer) : "");
+  }, [selectedCustomer]);
 
   useEffect(() => {
     if (!selectedFabric || !form.widthWhole || !form.heightWhole || !selectedPricingSettings) {
@@ -438,6 +442,57 @@ export default function NewQuotePage() {
     setPricingError("");
   }
 
+  function startDrawing(clientX: number, clientY: number) {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    drawingRef.current = true;
+    context.lineWidth = 2.5;
+    context.lineCap = "round";
+    context.strokeStyle = "#1C1C1C";
+    context.beginPath();
+    context.moveTo(clientX - rect.left, clientY - rect.top);
+  }
+
+  function continueDrawing(clientX: number, clientY: number) {
+    if (!drawingRef.current) return;
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+    const rect = canvas.getBoundingClientRect();
+    context.lineTo(clientX - rect.left, clientY - rect.top);
+    context.stroke();
+  }
+
+  function stopDrawing() {
+    drawingRef.current = false;
+  }
+
+  function clearSignature() {
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    setSignatureError("");
+    setSignatureSuccess("");
+  }
+
+  function signatureIsEmpty() {
+    const canvas = canvasRef.current;
+    if (!canvas) return true;
+    const context = canvas.getContext("2d");
+    if (!context) return true;
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    for (let index = 3; index < pixels.length; index += 4) {
+      if (pixels[index] !== 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   function handleEdit(line: LineItem) {
     setEditingLineId(line.id);
     setForm({
@@ -506,7 +561,6 @@ export default function NewQuotePage() {
       msrpTotal: priceResult.msrp_total ?? 0,
       costFactor: selectedPricingSettings.cost_factor,
       costPrice: priceResult.cost_price ?? 0,
-      margin: selectedPricingSettings.default_margin,
       sellPrice: unitPrice,
       lineTotal: unitPrice * quantity,
     };
@@ -522,14 +576,69 @@ export default function NewQuotePage() {
     resetForm();
   }
 
-  async function persistQuote(nextStatus: "pending" | "ordered") {
+  async function persistQuote(nextStatus: "pending" | "ordered" | "approved") {
     if (!selectedCustomer || lineItems.length === 0) {
       setSaveError("Select a customer and add at least one line before saving.");
-      return;
+      return null;
     }
 
     setIsSaving(true);
     setSaveError("");
+
+    if (savedQuoteId) {
+      const { error: updateError } = await supabase
+        .from("quotes")
+        .update({
+          customer_id: selectedCustomer.id,
+          status: nextStatus,
+          subtotal,
+          shipping: Number(shipping || 0),
+          installation: Number(installation || 0),
+          discount_type: discountType,
+          discount_value: Number(discountValue || 0),
+          tax_rate: taxRate,
+          tax_amount: taxAmount,
+          total,
+          notes: `Quote ${quoteNumber}`,
+        })
+        .eq("id", savedQuoteId);
+
+      if (updateError) {
+        setSaveError("Unable to update quote right now.");
+        setIsSaving(false);
+        return null;
+      }
+
+      await supabase.from("quote_lines").delete().eq("quote_id", savedQuoteId);
+      const refreshedLines = lineItems.map((line, index) => ({
+        quote_id: savedQuoteId,
+        line_number: index + 1,
+        room: line.room,
+        manufacturer_id: line.manufacturerId,
+        product_id: line.productId,
+        fabric_id: line.fabricId,
+        lift_option_id: line.liftOptionId,
+        design_options: null,
+        mount_type: line.mountType,
+        width_whole: line.widthWhole,
+        width_fraction: line.widthFraction,
+        height_whole: line.heightWhole,
+        height_fraction: line.heightFraction,
+        quantity: line.quantity,
+        msrp_base: line.msrpBase,
+        surcharges_total: line.surchargeTotal,
+        msrp_total: line.msrpTotal,
+        cost_factor: line.costFactor,
+        cost_price: line.costPrice,
+        sell_price: line.sellPrice,
+        line_total: line.lineTotal,
+        notes: line.notes || null,
+      }));
+      await supabase.from("quote_lines").insert(refreshedLines);
+
+      setIsSaving(false);
+      return savedQuoteId;
+    }
 
     const quoteNotes = `Quote ${quoteNumber}`;
     const { data: quote, error: quoteError } = await supabase
@@ -553,7 +662,7 @@ export default function NewQuotePage() {
     if (quoteError || !quote) {
       setSaveError("Unable to save quote right now.");
       setIsSaving(false);
-      return;
+      return null;
     }
 
     const linePayload = lineItems.map((line, index) => ({
@@ -576,7 +685,6 @@ export default function NewQuotePage() {
       msrp_total: line.msrpTotal,
       cost_factor: line.costFactor,
       cost_price: line.costPrice,
-      margin: line.margin,
       sell_price: line.sellPrice,
       line_total: line.lineTotal,
       notes: line.notes || null,
@@ -587,10 +695,72 @@ export default function NewQuotePage() {
     if (lineError) {
       setSaveError("Quote saved, but line items could not be written.");
       setIsSaving(false);
+      return null;
+    }
+
+    setSavedQuoteId(String(quote.id));
+    setIsSaving(false);
+    return String(quote.id);
+  }
+
+  async function saveAndRedirect(nextStatus: "pending" | "ordered") {
+    const quoteId = await persistQuote(nextStatus);
+    if (quoteId) {
+      router.push("/quotes");
+    }
+  }
+
+  async function handleSaveSignature() {
+    if (!lineItems.length) {
+      setSignatureError("Add at least one line before requesting signature.");
       return;
     }
 
-    router.push("/quotes");
+    if (!agreedToTerms || !agreedToDisclaimer) {
+      setSignatureError("The customer must agree to both confirmations before signing.");
+      return;
+    }
+
+    if (!agreementName.trim()) {
+      setSignatureError("Enter the customer's name before saving the signature.");
+      return;
+    }
+
+    if (signatureIsEmpty()) {
+      setSignatureError("Capture a signature before saving.");
+      return;
+    }
+
+    setIsSavingSignature(true);
+    setSignatureError("");
+    setSignatureSuccess("");
+
+    const quoteId = await persistQuote("approved");
+    if (!quoteId) {
+      setIsSavingSignature(false);
+      return;
+    }
+
+    const signatureData = canvasRef.current?.toDataURL("image/png") ?? "";
+
+    const { error } = await supabase.from("quote_signatures").insert({
+      quote_id: quoteId,
+      customer_name: agreementName.trim(),
+      signature_data: signatureData,
+      agreed_to_terms: true,
+      agreed_to_disclaimer: true,
+      ip_address: null,
+      signed_at: new Date().toISOString(),
+    });
+
+    if (error) {
+      setSignatureError("Quote saved, but the signature could not be recorded.");
+      setIsSavingSignature(false);
+      return;
+    }
+
+    setSignatureSuccess(`Quote approved and signed by ${agreementName.trim()}`);
+    setIsSavingSignature(false);
   }
 
   return (
@@ -642,11 +812,11 @@ export default function NewQuotePage() {
                           type="button"
                           onClick={() => {
                             setSelectedCustomer(customer);
-                            setCustomerQuery(customer.name);
+                            setCustomerQuery(getCustomerDisplayName(customer));
                           }}
                           className="flex w-full items-center justify-between bg-white px-4 py-3 text-left text-sm text-stone-700 transition hover:bg-stone-50"
                         >
-                          <span>{customer.name}</span>
+                          <span>{getCustomerDisplayName(customer)}</span>
                           <span className="text-stone-400">{customer.phone || "No phone"}</span>
                         </button>
                       ))
@@ -671,7 +841,7 @@ export default function NewQuotePage() {
 
             {selectedCustomer ? (
               <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-950">
-                <p className="font-semibold">{selectedCustomer.name}</p>
+                <p className="font-semibold">{getCustomerDisplayName(selectedCustomer)}</p>
                 <p className="mt-1">{selectedCustomer.phone || "No phone on file"}</p>
                 <p className="mt-1">{formatAddress(selectedCustomer) || "No address on file"}</p>
               </div>
@@ -809,13 +979,13 @@ export default function NewQuotePage() {
                     <select
                       value={form.widthFraction}
                       onChange={(event) =>
-                        updateForm("widthFraction", event.target.value as FractionOption)
+                        updateForm("widthFraction", event.target.value as FractionValue)
                       }
                       className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
                     >
-                      {fractionOptions.map((fraction) => (
-                        <option key={fraction} value={fraction}>
-                          {fraction}
+                      {FRACTION_OPTIONS.map((fraction) => (
+                        <option key={fraction.value} value={fraction.value}>
+                          {fraction.label}
                         </option>
                       ))}
                     </select>
@@ -837,13 +1007,13 @@ export default function NewQuotePage() {
                     <select
                       value={form.heightFraction}
                       onChange={(event) =>
-                        updateForm("heightFraction", event.target.value as FractionOption)
+                        updateForm("heightFraction", event.target.value as FractionValue)
                       }
                       className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
                     >
-                      {fractionOptions.map((fraction) => (
-                        <option key={fraction} value={fraction}>
-                          {fraction}
+                      {FRACTION_OPTIONS.map((fraction) => (
+                        <option key={fraction.value} value={fraction.value}>
+                          {fraction.label}
                         </option>
                       ))}
                     </select>
@@ -889,21 +1059,7 @@ export default function NewQuotePage() {
                 <p className="mt-3 text-3xl font-semibold tracking-tight text-primary">
                   {formatCurrency(priceResult?.sell_price ?? 0)}
                 </p>
-                <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
-                  <span className="rounded-full bg-white px-3 py-1 text-stone-600 ring-1 ring-stone-200">
-                    Margin {Math.round((selectedPricingSettings?.default_margin ?? 0) * 100)}%
-                  </span>
-                  {selectedPricingSettings &&
-                  selectedPricingSettings.default_margin <
-                    selectedPricingSettings.minimum_margin ? (
-                    <span className="text-rose-600">
-                      Warning: margin is below the minimum allowed.
-                    </span>
-                  ) : null}
-                  {pricingError ? (
-                    <span className="text-rose-600">{pricingError}</span>
-                  ) : null}
-                </div>
+                {pricingError ? <p className="mt-3 text-sm text-rose-600">{pricingError}</p> : null}
               </div>
             ) : null}
 
@@ -965,10 +1121,10 @@ export default function NewQuotePage() {
                           </div>
                         </td>
                         <td className="px-4 py-4 text-sm text-stone-600">
-                          {line.widthWhole} {line.widthFraction}
+                          {formatMeasurement(line.widthWhole, line.widthFraction)}
                         </td>
                         <td className="px-4 py-4 text-sm text-stone-600">
-                          {line.heightWhole} {line.heightFraction}
+                          {formatMeasurement(line.heightWhole, line.heightFraction)}
                         </td>
                         <td className="px-4 py-4 text-sm text-stone-600">{line.quantity}</td>
                         <td className="px-4 py-4 text-sm font-medium text-stone-950">
@@ -1053,6 +1209,93 @@ export default function NewQuotePage() {
               Running subtotal:{" "}
               <span className="font-semibold text-stone-950">{formatCurrency(subtotal)}</span>
             </div>
+
+            <div className="mt-5">
+              <button
+                type="button"
+                onClick={() => setShowAdvancedOptions((current) => !current)}
+                className="rounded-xl border border-stone-300 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 transition hover:border-stone-400"
+              >
+                Advanced options
+              </button>
+            </div>
+
+            {showAdvancedOptions ? (
+              <div className="mt-5 rounded-2xl border border-stone-200 bg-stone-50 p-5">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-stone-700">
+                      Shipping amount
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={shipping}
+                      onChange={(event) => setShipping(event.target.value)}
+                      className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-stone-700">
+                      Installation amount
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={installation}
+                      onChange={(event) => setInstallation(event.target.value)}
+                      className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-5 grid gap-4 md:grid-cols-[220px_1fr]">
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-stone-700">
+                      Discount type
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setDiscountType("percent")}
+                        className={`rounded-xl border px-4 py-3 text-sm font-medium transition ${
+                          discountType === "percent"
+                            ? "border-primary bg-primary text-white"
+                            : "border-stone-200 bg-white text-stone-700"
+                        }`}
+                      >
+                        %
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDiscountType("amount")}
+                        className={`rounded-xl border px-4 py-3 text-sm font-medium transition ${
+                          discountType === "amount"
+                            ? "border-primary bg-primary text-white"
+                            : "border-stone-200 bg-white text-stone-700"
+                        }`}
+                      >
+                        $
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-stone-700">
+                      Discount value
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={discountValue}
+                      onChange={(event) => setDiscountValue(event.target.value)}
+                      className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </section>
 
           <section className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
@@ -1060,96 +1303,11 @@ export default function NewQuotePage() {
               Quote totals
             </h2>
 
-            <div className="mt-5 grid gap-4 md:grid-cols-2">
-              <div>
-                <label className="mb-2 block text-sm font-medium text-stone-700">
-                  Shipping
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  value={shipping}
-                  onChange={(event) => setShipping(event.target.value)}
-                  className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
-                />
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-medium text-stone-700">
-                  Installation
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  value={installation}
-                  onChange={(event) => setInstallation(event.target.value)}
-                  className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
-                />
-              </div>
-            </div>
-
-            <div className="mt-5 grid gap-4 md:grid-cols-[220px_1fr]">
-              <div>
-                <label className="mb-2 block text-sm font-medium text-stone-700">
-                  Discount type
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setDiscountType("percent")}
-                    className={`rounded-xl border px-4 py-3 text-sm font-medium transition ${
-                      discountType === "percent"
-                        ? "border-primary bg-primary text-white"
-                        : "border-stone-200 bg-white text-stone-700"
-                    }`}
-                  >
-                    %
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDiscountType("amount")}
-                    className={`rounded-xl border px-4 py-3 text-sm font-medium transition ${
-                      discountType === "amount"
-                        ? "border-primary bg-primary text-white"
-                        : "border-stone-200 bg-white text-stone-700"
-                    }`}
-                  >
-                    $
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-medium text-stone-700">
-                  Discount value
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  value={discountValue}
-                  onChange={(event) => setDiscountValue(event.target.value)}
-                  className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
-                />
-              </div>
-            </div>
-
             <div className="mt-6 rounded-2xl border border-stone-200 bg-stone-50 p-5">
               <div className="space-y-3">
                 <div className="flex items-center justify-between text-sm text-stone-600">
                   <span>Subtotal</span>
                   <span>{formatCurrency(subtotal)}</span>
-                </div>
-                <div className="flex items-center justify-between text-sm text-stone-600">
-                  <span>Shipping</span>
-                  <span>{formatCurrency(Number(shipping || 0))}</span>
-                </div>
-                <div className="flex items-center justify-between text-sm text-stone-600">
-                  <span>Installation</span>
-                  <span>{formatCurrency(Number(installation || 0))}</span>
-                </div>
-                <div className="flex items-center justify-between text-sm text-stone-600">
-                  <span>Discount</span>
-                  <span>-{formatCurrency(discountAmount)}</span>
                 </div>
                 <div className="flex items-center justify-between text-sm text-stone-600">
                   <span>Tax</span>
@@ -1164,11 +1322,111 @@ export default function NewQuotePage() {
 
             {saveError ? <p className="mt-4 text-sm text-rose-600">{saveError}</p> : null}
             {isLoadingData ? <p className="mt-4 text-sm text-stone-400">Loading pricing data...</p> : null}
+          </section>
 
-            <div className="mt-6 flex flex-wrap gap-3">
+          {lineItems.length > 0 ? (
+            <section className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
+              <h2 className="text-lg font-semibold tracking-tight text-stone-950">
+                Customer agreement
+              </h2>
+
+              <div className="mt-5 rounded-2xl border border-stone-200 bg-stone-50 p-4">
+                <p className="text-sm font-medium text-stone-700">Terms and conditions</p>
+                <div className="mt-3 max-h-[150px] overflow-y-auto rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm leading-6 text-stone-600">
+                  {businessSettings?.terms_and_conditions?.trim()
+                    ? businessSettings.terms_and_conditions
+                    : "Configure your terms and conditions in Settings → Company Setup"}
+                </div>
+              </div>
+
+              <div className="mt-5 space-y-4">
+                <label className="flex items-start gap-3 text-sm text-stone-700">
+                  <input
+                    type="checkbox"
+                    checked={agreedToTerms}
+                    onChange={(event) => setAgreedToTerms(event.target.checked)}
+                    className="mt-1 h-4 w-4 accent-[#FF4900]"
+                  />
+                  <span>I have read and agree to the terms and conditions</span>
+                </label>
+
+                <label className="flex items-start gap-3 text-sm text-stone-700">
+                  <input
+                    type="checkbox"
+                    checked={agreedToDisclaimer}
+                    onChange={(event) => setAgreedToDisclaimer(event.target.checked)}
+                    className="mt-1 h-4 w-4 accent-[#FF4900]"
+                  />
+                  <span>
+                    I understand that all window treatments are custom fabricated and non-refundable
+                  </span>
+                </label>
+              </div>
+
+              <div className="mt-5">
+                <label className="mb-2 block text-sm font-medium text-stone-700">
+                  Customer name
+                </label>
+                <input
+                  type="text"
+                  value={agreementName}
+                  onChange={(event) => setAgreementName(event.target.value)}
+                  className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+                />
+              </div>
+
+              <div className="mt-5 overflow-hidden rounded-2xl border border-stone-200 bg-stone-50">
+                <div className="flex items-center justify-center border-b border-stone-200 bg-white px-4 py-3 text-sm text-stone-400">
+                  Sign here
+                </div>
+                <canvas
+                  ref={canvasRef}
+                  width={900}
+                  height={220}
+                  className="h-44 w-full touch-none bg-white"
+                  onMouseDown={(event) => startDrawing(event.clientX, event.clientY)}
+                  onMouseMove={(event) => continueDrawing(event.clientX, event.clientY)}
+                  onMouseUp={stopDrawing}
+                  onMouseLeave={stopDrawing}
+                  onTouchStart={(event) => {
+                    const touch = event.touches[0];
+                    startDrawing(touch.clientX, touch.clientY);
+                  }}
+                  onTouchMove={(event) => {
+                    const touch = event.touches[0];
+                    continueDrawing(touch.clientX, touch.clientY);
+                  }}
+                  onTouchEnd={stopDrawing}
+                />
+              </div>
+
               <button
                 type="button"
-                onClick={() => void persistQuote("pending")}
+                onClick={clearSignature}
+                className="mt-4 rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 transition hover:border-stone-300"
+              >
+                Clear
+              </button>
+
+              {signatureError ? <p className="mt-4 text-sm text-rose-600">{signatureError}</p> : null}
+              {signatureSuccess ? <p className="mt-4 text-sm text-emerald-600">{signatureSuccess}</p> : null}
+
+              <button
+                type="button"
+                onClick={() => void handleSaveSignature()}
+                disabled={isSavingSignature}
+                className="mt-5 w-full rounded-xl bg-primary px-4 py-3 text-sm font-medium text-white transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isSavingSignature ? "Saving..." : "Save & get signature"}
+              </button>
+            </section>
+          ) : null}
+
+          <section className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => void saveAndRedirect("pending")}
                 disabled={isSaving}
                 className="rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-70"
               >
@@ -1176,7 +1434,7 @@ export default function NewQuotePage() {
               </button>
               <button
                 type="button"
-                onClick={() => void persistQuote("ordered")}
+                onClick={() => void saveAndRedirect("ordered")}
                 disabled={isSaving}
                 className="rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 transition hover:border-stone-300 disabled:cursor-not-allowed disabled:opacity-70"
               >

@@ -82,8 +82,8 @@ function NavLink({
       href={item.href}
       className={`flex items-center justify-between gap-3 border-l-2 px-3 py-2.5 text-sm transition ${
         isActive
-          ? "border-[#FF4900] bg-[rgba(255,73,0,0.12)] font-medium text-white"
-          : "border-transparent text-[rgba(255,255,255,0.55)] hover:bg-white/5 hover:text-white"
+          ? "border-[#FF4900] bg-[rgba(255,73,0,0.12)] font-medium !text-white"
+          : "border-transparent bg-transparent !text-[rgba(255,255,255,0.55)] hover:bg-white/5 hover:!text-white"
       }`}
     >
       <span>{item.label}</span>
