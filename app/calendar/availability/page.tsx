@@ -134,7 +134,7 @@ export default function AvailabilityPage() {
         ...current.filter((entry) => entry.repUserId !== effectiveRepId),
         { repUserId: effectiveRepId, submittedAt: new Date().toISOString() },
       ]);
-      setMessage(`Submitted ${result.count ?? slots.length} slots.`);
+      setMessage("Availability submitted! Your appointment setter can now book your slots.");
     } else {
       setMessage(result.error || "Unable to submit availability.");
     }
@@ -156,6 +156,30 @@ export default function AvailabilityPage() {
         />
 
         <div className="space-y-6 p-8">
+          {/* Submission status badge */}
+          {(() => {
+            const mySubmission = submissions.find((s) => s.repUserId === effectiveRepId);
+            const isOverdue = new Date().getDate() > 25 && !mySubmission;
+            return (
+              <>
+                {mySubmission ? (
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+                    ✓ Submitted for {formatMonthLabel(nextMonth)}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
+                    Not submitted — due by the 25th
+                  </div>
+                )}
+                {isOverdue && (
+                  <div className="rounded-2xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm font-medium text-primary">
+                    Availability for {formatMonthLabel(nextMonth)} is overdue — please submit now
+                  </div>
+                )}
+              </>
+            );
+          })()}
+
           {message ? (
             <div className="rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-700">
               {message}
@@ -267,6 +291,22 @@ export default function AvailabilityPage() {
                 ))}
                 <button
                   type="button"
+                  onClick={() => {
+                    const next: Record<string, boolean> = {};
+                    nextMonthDays.forEach((day) => {
+                      if (day.getDay() >= 1 && day.getDay() <= 5) {
+                        next[`${toDateKey(day)}__AM`] = true;
+                        next[`${toDateKey(day)}__PM`] = true;
+                      }
+                    });
+                    setSelection(next);
+                  }}
+                  className="rounded-full bg-stone-100 px-3 py-2 text-sm text-stone-700"
+                >
+                  Weekdays only
+                </button>
+                <button
+                  type="button"
                   onClick={() => setSelection({})}
                   className="rounded-full bg-stone-100 px-3 py-2 text-sm text-stone-700"
                 >
@@ -309,14 +349,21 @@ export default function AvailabilityPage() {
               ))}
             </div>
 
-            <div className="mt-6 flex justify-end">
+            <div className="mt-4 text-sm text-stone-500">
+              You have selected <span className="font-semibold text-stone-900">{Object.values(selection).filter(Boolean).length}</span> available slots for {formatMonthLabel(nextMonth)}
+              {Object.values(selection).filter(Boolean).length < 10 && (
+                <span className="text-rose-500"> (minimum 10 required)</span>
+              )}
+            </div>
+
+            <div className="mt-4">
               <button
                 type="button"
                 onClick={() => void handleSubmit()}
                 disabled={Object.values(selection).filter(Boolean).length < 10 || isSubmitting}
-                className="min-h-12 rounded-2xl bg-primary px-5 text-sm font-semibold text-white disabled:opacity-50"
+                className="w-full min-h-12 rounded-2xl bg-primary px-5 text-sm font-semibold text-white disabled:opacity-50"
               >
-                {isSubmitting ? "Submitting..." : "Submit availability"}
+                {isSubmitting ? "Submitting..." : `Submit availability for ${formatMonthLabel(nextMonth)}`}
               </button>
             </div>
           </section>

@@ -804,17 +804,28 @@ export default function CalendarPage() {
       <Sidebar current="Calendar" />
 
       <section className="flex min-h-screen flex-1 flex-col">
-        <Topbar
-          title="Calendar"
-          actionLabel={getRoleCanSubmitAvailability(currentUser?.roleName ?? "") ? "Submit my availability" : undefined}
-          actionOnClick={
-            getRoleCanSubmitAvailability(currentUser?.roleName ?? "")
-              ? () => setIsAvailabilityOpen(true)
-              : undefined
-          }
-        />
+        <Topbar title="Calendar" />
 
         <div className="flex-1 space-y-6 p-8">
+          {/* Role-based action buttons */}
+          <div className="flex flex-wrap gap-3">
+            {getRoleCanSubmitAvailability(currentUser?.roleName ?? "") && (
+              <Link
+                href="/calendar/availability"
+                className="rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white hover:opacity-90"
+              >
+                Submit my availability
+              </Link>
+            )}
+            {["Owner", "Office Manager", "Appointment Setter"].includes(currentUser?.roleName ?? "") && (
+              <Link
+                href="/calendar/booking"
+                className="rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white hover:opacity-90"
+              >
+                Book appointment
+              </Link>
+            )}
+          </div>
           {message ? (
             <div className="rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-700">
               {message}

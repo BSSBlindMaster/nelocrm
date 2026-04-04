@@ -415,6 +415,14 @@ export function Sidebar({ current }: SidebarProps) {
 
     if (hasPermission(effectivePermissions, "calendar.view")) {
       items.push({ label: "Calendar", href: "/calendar", badgeCount: todayAppointmentsCount });
+
+      // Calendar sub-items based on role
+      if (currentRoleName === "Sales Rep") {
+        items.push({ label: "My availability", href: "/calendar/availability" });
+      }
+      if (["Owner", "Office Manager", "Appointment Setter"].includes(currentRoleName)) {
+        items.push({ label: "Book appointment", href: "/calendar/booking" });
+      }
     }
 
     if (
