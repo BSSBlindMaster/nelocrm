@@ -516,35 +516,39 @@ export function Sidebar({ current }: SidebarProps) {
   const adminSectionExpanded = isOwnerRole || isAdminOpen;
 
   return (
-    <aside className="flex h-screen w-[240px] min-w-[240px] shrink-0 flex-col bg-[#1C1C1C] px-5 py-6 text-white">
-      <Link href="/dashboard" className="flex items-center gap-2 p-4">
-        <span className="inline-flex h-[18px] w-6 items-center justify-center text-[#FF4900]">
-          <svg
-            viewBox="0 0 24 24"
-            className="h-[18px] w-6"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            aria-hidden="true"
-          >
-            <path d="M9.5 14.5 14.5 9.5" strokeLinecap="round" strokeLinejoin="round" />
-            <path
-              d="M7.25 16.75a3 3 0 0 1 0-4.25l2-2a3 3 0 0 1 4.25 0"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <path
-              d="M16.75 7.25a3 3 0 0 1 0 4.25l-2 2a3 3 0 0 1-4.25 0"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </span>
-        <span className="text-[18px] font-light tracking-[-0.5px] text-white">nelo</span>
-      </Link>
+    <aside className="flex h-screen w-[240px] min-w-[240px] shrink-0 flex-col bg-[#1C1C1C] text-white">
+      {/* Logo — fixed at top */}
+      <div className="shrink-0 px-5 pt-6">
+        <Link href="/dashboard" className="flex items-center gap-2 p-4">
+          <span className="inline-flex h-[18px] w-6 items-center justify-center text-[#FF4900]">
+            <svg
+              viewBox="0 0 24 24"
+              className="h-[18px] w-6"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              aria-hidden="true"
+            >
+              <path d="M9.5 14.5 14.5 9.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path
+                d="M7.25 16.75a3 3 0 0 1 0-4.25l2-2a3 3 0 0 1 4.25 0"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M16.75 7.25a3 3 0 0 1 0 4.25l-2 2a3 3 0 0 1-4.25 0"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+          <span className="text-[18px] font-light tracking-[-0.5px] text-white">nelo</span>
+        </Link>
+      </div>
 
-      <nav className="mt-10 flex flex-1 flex-col gap-1">
-        <div className={isLoadingPermissions ? "animate-pulse" : ""}>
+      {/* Nav — scrollable middle */}
+      <nav className="flex-1 overflow-y-auto px-5 pb-20" style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.15) transparent" }}>
+        <div className={`mt-6 ${isLoadingPermissions ? "animate-pulse" : ""}`}>
           {showWorkSection ? <Section title="Work" items={workItems} current={current} /> : null}
 
           {showMarketingSection ? (
@@ -556,7 +560,7 @@ export function Sidebar({ current }: SidebarProps) {
           ) : null}
 
           {showAdminSection ? (
-            <div className="mt-auto pt-6">
+            <div className="pt-6">
               <button
                 type="button"
                 onClick={() => {
@@ -582,6 +586,11 @@ export function Sidebar({ current }: SidebarProps) {
           ) : null}
         </div>
       </nav>
+
+      {/* Bottom — pinned */}
+      <div className="shrink-0 border-t border-white/10 px-5 py-4">
+        <p className="text-center text-[10px] tracking-wide text-white/25">Powered by Nelo</p>
+      </div>
     </aside>
   );
 }
