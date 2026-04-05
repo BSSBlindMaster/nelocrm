@@ -13,6 +13,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { Badge } from "@/components/Badge";
 import { Sidebar } from "@/components/Sidebar";
 import { Topbar } from "@/components/Topbar";
 import { getCurrentAppUser, type CurrentAppUser } from "@/lib/current-app-user";
@@ -61,7 +62,8 @@ type WidgetKey =
   | "nsli"
   | "todays_appointments"
   | "team_performance"
-  | "sales_by_week";
+  | "sales_by_week"
+  | "lead_sources";
 
 type WidgetLayout = {
   id?: string;
@@ -100,7 +102,7 @@ type TeamPerformanceRow = {
 };
 
 type DashboardData = {
-  revenueGoal: { actual: number; target: number; percentage: number };
+  revenueGoal: { actual: number; target: number; percentage: number; hasGoal: boolean };
   revenueMtd: number;
   revenueTrend: number;
   closeRatio: { ratio: number; sold: number; total: number };
@@ -135,6 +137,7 @@ const OWNER_DEFAULT_WIDGETS: Array<{ key: WidgetKey; size: WidgetSize; position:
   { key: "todays_appointments", size: "medium", position: 5 },
   { key: "team_performance", size: "medium", position: 6 },
   { key: "sales_by_week", size: "large", position: 7 },
+  { key: "lead_sources", size: "small", position: 8 },
 ];
 
 const PIE_COLORS = ["#FF4900", "#2DA44E", "#BA7517", "#1A6BC4", "#A32D2D"];
@@ -191,12 +194,38 @@ function widgetSizeToSpan(size: WidgetSize) {
 
 function widgetSizeClass(size: WidgetSize) {
   if (size === "large") {
-    return "col-span-1 md:col-span-2 xl:col-span-4 xl:row-span-2";
+    return "col-span-1 md:col-span-2 xl:row-span-2";
   }
   if (size === "medium") {
-    return "col-span-1 md:col-span-2 xl:col-span-2 xl:row-span-1";
+    return "col-span-1 md:col-span-2 xl:row-span-1";
   }
-  return "col-span-1 md:col-span-1 xl:col-span-1 xl:row-span-1";
+  return "col-span-1 md:col-span-1 xl:row-span-1";
+}
+
+function widgetDesktopSpan(widgetKey: WidgetKey) {
+  if (widgetKey === "revenue_goal_progress") return "xl:col-span-4";
+  if (widgetKey === "todays_appointments" || widgetKey === "team_performance") return "xl:col-span-2";
+  if (widgetKey === "sales_by_week") return "xl:col-span-3";
+  if (widgetKey === "lead_sources") return "xl:col-span-1";
+  return "xl:col-span-1";
+}
+
+function statusTone(status: string) {
+  const normalized = status.toLowerCase();
+  if (normalized.includes("complete") || normalized.includes("sold")) return "active";
+  if (normalized.includes("pending") || normalized.includes("scheduled")) return "lead";
+  return "customer";
+}
+
+function isoWeekLabel(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Week";
+  const utcDate = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = utcDate.getUTCDay() || 7;
+  utcDate.setUTCDate(utcDate.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(utcDate.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((utcDate.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `W${weekNo}`;
 }
 
 function metricTone(value: number, target: number) {
@@ -365,7 +394,7 @@ function WidgetShell({
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className={`group rounded-3xl border border-stone-200 bg-white p-5 shadow-sm ${widgetSizeClass(size)}`}
+      className="group rounded-3xl border border-stone-200 bg-white p-5 shadow-sm"
     >
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -466,7 +495,7 @@ async function loadOwnerWidgets(userId: string) {
     }> | null) ?? [];
 
   if (rows.length > 0) {
-    return rows.map((row) => {
+    const hydrated = rows.map((row) => {
       const widgetKey = String(row.kpi_key ?? "").replace("widget.", "") as WidgetKey;
       const size = (row.size as WidgetSize | null) ?? "small";
       return {
@@ -478,6 +507,17 @@ async function loadOwnerWidgets(userId: string) {
         position: row.position ?? 0,
       } satisfies WidgetLayout;
     });
+
+    const existingKeys = new Set(hydrated.map((widget) => widget.widgetKey));
+    const missingDefaults = OWNER_DEFAULT_WIDGETS.filter((widget) => !existingKeys.has(widget.key)).map((widget) => ({
+      kpi_key: widgetKeyToDb(widget.key),
+      widgetKey: widget.key,
+      size: widget.size,
+      col_span: widgetSizeToSpan(widget.size),
+      position: widget.position,
+    }));
+
+    return [...hydrated, ...missingDefaults].sort((a, b) => a.position - b.position);
   }
 
   const defaults = OWNER_DEFAULT_WIDGETS.map((widget) => ({
@@ -529,7 +569,7 @@ export default function DashboardPage() {
   const [customEndDate, setCustomEndDate] = useState("");
   const [comparePriorYear, setComparePriorYear] = useState(false);
   const [data, setData] = useState<DashboardData>({
-    revenueGoal: { actual: 0, target: 0, percentage: 0 },
+    revenueGoal: { actual: 0, target: 0, percentage: 0, hasGoal: false },
     revenueMtd: 0,
     revenueTrend: 0,
     closeRatio: { ratio: 0, sold: 0, total: 0 },
@@ -607,6 +647,7 @@ export default function DashboardPage() {
             slot,
             status,
             scheduled_at,
+            assigned_to,
             customers(name, first_name, last_name),
             app_users(first_name, last_name)
           `)
@@ -633,7 +674,9 @@ export default function DashboardPage() {
       if (!isMounted) return;
 
       const todayAppointments =
-        ((todayAppointmentsResponse.data as Array<Record<string, unknown>> | null) ?? []).map((row) => {
+        ((todayAppointmentsResponse.data as Array<Record<string, unknown>> | null) ?? [])
+          .filter((row) => (effectiveMode === "sales_rep" ? String(row.assigned_to ?? "") === user?.id : true))
+          .map((row) => {
           const customer =
             row.customers && !Array.isArray(row.customers)
               ? (row.customers as Record<string, unknown>)
@@ -657,17 +700,13 @@ export default function DashboardPage() {
           } satisfies AppointmentSummary;
         });
 
-      const weeklyBuckets = [1, 2, 3, 4, 5].map((week) => ({
-        label: `Week ${week}`,
-        value: 0,
-      }));
+      const weeklyTotals = new Map<string, number>();
       const salesRows =
         (salesByWeekResponse.data as Array<{ sale_amount?: number | null; sold?: boolean | null; scheduled_at?: string | null }> | null) ?? [];
       salesRows.forEach((row) => {
         if (!row.sold) return;
-        const date = new Date(String(row.scheduled_at ?? ""));
-        const week = Math.min(5, Math.floor((date.getDate() - 1) / 7) + 1);
-        weeklyBuckets[week - 1].value += safeNumber(row.sale_amount);
+        const label = isoWeekLabel(String(row.scheduled_at ?? ""));
+        weeklyTotals.set(label, (weeklyTotals.get(label) ?? 0) + safeNumber(row.sale_amount));
       });
 
       const teamRows = teamKpis.map((row) => ({
@@ -717,7 +756,7 @@ export default function DashboardPage() {
           effectiveMode === "sales_manager" && user?.location
             ? teamRows.filter((row) => row.location === user.location)
             : teamRows,
-        salesByWeek: weeklyBuckets,
+        salesByWeek: Array.from(weeklyTotals.entries()).map(([label, value]) => ({ label, value })),
         leadSources: leadSources.slice(0, 5).map((item) => ({
           source: item.source,
           leads: item.leads,
@@ -819,43 +858,55 @@ export default function DashboardPage() {
               setDraggedWidget(null);
             }}
           >
-            <div className="flex h-full flex-col">
-              <div className="h-5 rounded-full bg-stone-100">
-                <div
-                  className="h-5 rounded-full transition-all"
-                  style={{
-                    width: `${Math.min(data.revenueGoal.percentage * 100, 100)}%`,
-                    backgroundColor: progressColor(data.revenueGoal.percentage),
-                  }}
-                />
+            {data.revenueGoal.hasGoal ? (
+              <div className="flex h-full flex-col">
+                <div className="h-5 rounded-full bg-stone-100">
+                  <div
+                    className="h-5 rounded-full transition-all"
+                    style={{
+                      width: `${Math.min(data.revenueGoal.percentage * 100, 100)}%`,
+                      backgroundColor: progressColor(data.revenueGoal.percentage),
+                    }}
+                  />
+                </div>
+                <div className="mt-5 grid gap-4 md:grid-cols-4">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.18em] text-stone-400">Actual</p>
+                    <p className="mt-2 text-3xl font-semibold text-stone-950">
+                      {formatKpiValue(data.revenueGoal.actual, "currency")}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.18em] text-stone-400">Goal</p>
+                    <p className="mt-2 text-3xl font-semibold text-stone-950">
+                      {formatKpiValue(data.revenueGoal.target, "currency")}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.18em] text-stone-400">Progress</p>
+                    <p className={`mt-2 text-3xl font-semibold ${metricTone(data.revenueGoal.percentage, 1)}`}>
+                      {(data.revenueGoal.percentage * 100).toFixed(1)}%
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.18em] text-stone-400">Remaining</p>
+                    <p className="mt-2 text-3xl font-semibold text-stone-950">
+                      {formatKpiValue(Math.max(data.revenueGoal.target - data.revenueGoal.actual, 0), "currency")}
+                    </p>
+                  </div>
+                </div>
               </div>
-              <div className="mt-5 grid gap-4 md:grid-cols-4">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-stone-400">Actual</p>
-                  <p className="mt-2 text-3xl font-semibold text-stone-950">
-                    {formatKpiValue(data.revenueGoal.actual, "currency")}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-stone-400">Goal</p>
-                  <p className="mt-2 text-3xl font-semibold text-stone-950">
-                    {formatKpiValue(data.revenueGoal.target, "currency")}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-stone-400">Progress</p>
-                  <p className={`mt-2 text-3xl font-semibold ${metricTone(data.revenueGoal.percentage, 1)}`}>
-                    {(data.revenueGoal.percentage * 100).toFixed(1)}%
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-stone-400">Remaining</p>
-                  <p className="mt-2 text-3xl font-semibold text-stone-950">
-                    {formatKpiValue(Math.max(data.revenueGoal.target - data.revenueGoal.actual, 0), "currency")}
-                  </p>
-                </div>
+            ) : (
+              <div className="flex h-full flex-col justify-center rounded-2xl bg-stone-50 px-6 py-8">
+                <p className="text-lg font-semibold text-stone-950">No goal set</p>
+                <p className="mt-2 text-sm text-stone-500">
+                  Add your monthly company goal in settings to track progress here.
+                </p>
+                <Link href="/admin/settings" className="mt-4 text-sm font-medium text-primary">
+                  Settings → Company goals
+                </Link>
               </div>
-            </div>
+            )}
           </WidgetShell>
         );
 
@@ -991,17 +1042,23 @@ export default function DashboardPage() {
               {data.todaysAppointments.length > 0 ? (
                 data.todaysAppointments.map((appointment) => (
                   <div key={appointment.id} className="rounded-2xl bg-stone-50 px-4 py-4">
-                    <p className="font-medium text-stone-950">
-                      {appointment.slot} · {appointment.customerName}
-                    </p>
-                    <p className="mt-1 text-sm text-stone-500">
-                      {appointment.repName} · {appointment.status}
-                    </p>
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-medium text-stone-950">
+                        {appointment.slot} · {appointment.customerName}
+                      </p>
+                      <Badge label={appointment.status} tone={statusTone(appointment.status)} />
+                    </div>
+                    <p className="mt-1 text-sm text-stone-500">{appointment.repName}</p>
                   </div>
                 ))
               ) : (
                 <EmptyState>No appointments today.</EmptyState>
               )}
+            </div>
+            <div className="mt-4">
+              <Link href="/calendar" className="text-sm font-medium text-primary">
+                View calendar
+              </Link>
             </div>
           </WidgetShell>
         );
@@ -1064,11 +1121,41 @@ export default function DashboardPage() {
             <div className="h-full min-h-[260px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={data.salesByWeek}>
-                  <XAxis dataKey="label" tick={{ fill: "#ffffff" }} axisLine={false} tickLine={false} />
-                  <YAxis hide />
+                  <XAxis dataKey="label" tick={{ fill: "#57534e" }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: "#57534e" }} axisLine={false} tickLine={false} />
                   <Tooltip formatter={(value) => formatKpiValue(safeNumber(value), "currency")} />
                   <Bar dataKey="value" fill="#FF4900" radius={[10, 10, 0, 0]} />
                 </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </WidgetShell>
+        );
+
+      case "lead_sources":
+        return (
+          <WidgetShell
+            key={widget.widgetKey}
+            title="Lead sources"
+            size={widget.size}
+            onResize={() => void cycleWidgetSize(widget.widgetKey)}
+            onRemove={() => void removeWidget(widget.widgetKey)}
+            onDragStart={() => setDraggedWidget(widget.widgetKey)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={() => {
+              if (draggedWidget) void reorderWidgets(draggedWidget, widget.widgetKey);
+              setDraggedWidget(null);
+            }}
+          >
+            <div className="h-full min-h-[260px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={data.leadSources} dataKey="leads" nameKey="source" innerRadius={48} outerRadius={74}>
+                    {data.leadSources.map((entry, index) => (
+                      <Cell key={entry.source} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
               </ResponsiveContainer>
             </div>
           </WidgetShell>
@@ -1086,10 +1173,17 @@ export default function DashboardPage() {
     }));
 
     return (
-      <div className="grid auto-rows-[220px] grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid auto-rows-[220px] grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         {widgets
           .sort((a, b) => a.position - b.position)
-          .map((widget) => renderOwnerWidget(widget))}
+          .map((widget) => (
+            <div
+              key={widget.widgetKey}
+              className={`${widgetSizeClass(widget.size)} ${widgetDesktopSpan(widget.widgetKey)}`}
+            >
+              {renderOwnerWidget(widget)}
+            </div>
+          ))}
       </div>
     );
   }

@@ -267,7 +267,7 @@ export async function getRevenueVsGoal(range: DateRangeInput = {}) {
   const end = range.endDate || new Date().toISOString();
   const { data: goal } = await supabase
     .from("company_goals")
-    .select("target_revenue")
+    .select("target_revenue, target_leads, target_close_rate, target_average_sale")
     .eq("year", referenceDate.getFullYear())
     .eq("month", referenceDate.getMonth() + 1)
     .maybeSingle();
@@ -277,7 +277,12 @@ export async function getRevenueVsGoal(range: DateRangeInput = {}) {
     .filter((row) => row.sold && Number(row.sale_amount ?? 0) > 0);
   const actual = sumSaleAmount(sales);
   const target = Number((goal as { target_revenue?: number | null } | null)?.target_revenue ?? 0);
-  return { actual, target, percentage: target > 0 ? actual / target : 0 };
+  return {
+    actual,
+    target,
+    percentage: target > 0 ? actual / target : 0,
+    hasGoal: Boolean(goal && target > 0),
+  };
 }
 
 export async function getRevenue(
