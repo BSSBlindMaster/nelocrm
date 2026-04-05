@@ -8,6 +8,11 @@ export type KpiDefinition = {
   format: "percent" | "currency" | "number";
 };
 
+export type DateRangeInput = {
+  startDate?: string;
+  endDate?: string;
+};
+
 export const kpiDefinitions: KpiDefinition[] = [
   { key: "close_ratio", label: "Close ratio", description: "Sales closed ÷ leads received", category: "Sales KPIs", format: "percent" },
   { key: "average_sale", label: "Average sale", description: "Total sold ÷ sold appointments", category: "Sales KPIs", format: "currency" },
@@ -256,28 +261,36 @@ export async function getNSLI(userId?: string, startDate?: string, endDate?: str
   return { nsli: leadsIssued > 0 ? totalSold / leadsIssued : 0, totalSold, leadsIssued };
 }
 
-export async function getRevenueVsGoal() {
-  const now = new Date();
+export async function getRevenueVsGoal(range: DateRangeInput = {}) {
+  const referenceDate = range.startDate ? new Date(range.startDate) : new Date();
+  const start = range.startDate || startOfCurrentMonth();
+  const end = range.endDate || new Date().toISOString();
   const { data: goal } = await supabase
     .from("company_goals")
     .select("target_revenue")
-    .eq("year", now.getFullYear())
-    .eq("month", now.getMonth() + 1)
+    .eq("year", referenceDate.getFullYear())
+    .eq("month", referenceDate.getMonth() + 1)
     .maybeSingle();
 
   const allRows = await fetchAllAppointments();
-  const sales = filterAppointmentsByDate(allRows, startOfCurrentMonth(), new Date().toISOString())
+  const sales = filterAppointmentsByDate(allRows, start, end)
     .filter((row) => row.sold && Number(row.sale_amount ?? 0) > 0);
   const actual = sumSaleAmount(sales);
   const target = Number((goal as { target_revenue?: number | null } | null)?.target_revenue ?? 0);
   return { actual, target, percentage: target > 0 ? actual / target : 0 };
 }
 
-export async function getRevenue(userId?: string, scope: "mtd" | "ytd" = "mtd") {
-  const start = scope === "mtd" ? startOfCurrentMonth() : startOfCurrentYear();
+export async function getRevenue(
+  userId?: string,
+  scope: "mtd" | "ytd" = "mtd",
+  startDate?: string,
+  endDate?: string,
+) {
+  const start = startDate || (scope === "mtd" ? startOfCurrentMonth() : startOfCurrentYear());
+  const end = endDate || new Date().toISOString();
   const allRows = await fetchAllAppointments();
   const scopedRows = filterAppointmentsByUser(allRows, userId);
-  const dateRows = filterAppointmentsByDate(scopedRows, start, new Date().toISOString());
+  const dateRows = filterAppointmentsByDate(scopedRows, start, end);
   const soldRows = (dateRows.length > 0 ? dateRows : scopedRows).filter(
     (row) => row.sold && Number(row.sale_amount ?? 0) > 0,
   );
@@ -318,10 +331,14 @@ export async function getQuotesStats() {
   };
 }
 
-export async function getLeadsMetrics(userId?: string) {
+export async function getLeadsMetrics(userId?: string, startDate?: string, endDate?: string) {
   const allRows = await fetchAllAppointments();
   const scopedRows = filterAppointmentsByUser(allRows, userId);
-  const current = filterAppointmentsByDate(scopedRows, startOfCurrentMonth(), new Date().toISOString());
+  const current = filterAppointmentsByDate(
+    scopedRows,
+    startDate || startOfCurrentMonth(),
+    endDate || new Date().toISOString(),
+  );
   const previous = previousMonthRange();
   const previousRows = filterAppointmentsByDate(scopedRows, previous.start, previous.end);
   const booked = current.filter((row) => row.status !== "cancelled").length;
@@ -346,8 +363,12 @@ export async function getMarketingSpend() {
   return (data as Array<{ source?: string | null; amount?: number | null }> | null) ?? [];
 }
 
-export async function getLeadSourcesBreakdown() {
-  const rows = await fetchAppointments(undefined, startOfCurrentMonth(), new Date().toISOString());
+export async function getLeadSourcesBreakdown(startDate?: string, endDate?: string) {
+  const rows = await fetchAppointments(
+    undefined,
+    startDate || startOfCurrentMonth(),
+    endDate || new Date().toISOString(),
+  );
   const grouped = rows.reduce<Record<string, { leads: number; sold: number; revenue: number }>>((acc, row) => {
     const source = row.lead_source || "Unknown";
     acc[source] = acc[source] || { leads: 0, sold: 0, revenue: 0 };
@@ -418,24 +439,24 @@ export async function getAverageGrossMargin() {
   return margins.length > 0 ? margins.reduce((sum, value) => sum + value, 0) / margins.length : 0;
 }
 
-export async function getKpiValue(key: string, userId?: string) {
+export async function getKpiValue(key: string, userId?: string, startDate?: string, endDate?: string) {
   switch (key) {
     case "close_ratio": {
-      const result = await getCloseRatio(userId);
+      const result = await getCloseRatio(userId, startDate, endDate);
       return { value: result.ratio, meta: result };
     }
     case "average_sale": {
-      const result = await getAverageSale(userId);
+      const result = await getAverageSale(userId, startDate, endDate);
       return { value: result.average, meta: result };
     }
     case "nsli": {
-      const result = await getNSLI(userId);
+      const result = await getNSLI(userId, startDate, endDate);
       return { value: result.nsli, meta: result };
     }
     case "total_sold_mtd":
-      return { value: await getRevenue(userId, "mtd"), meta: null };
+      return { value: await getRevenue(userId, "mtd", startDate, endDate), meta: null };
     case "total_sold_ytd":
-      return { value: await getRevenue(userId, "ytd"), meta: null };
+      return { value: await getRevenue(userId, "ytd", startDate, endDate), meta: null };
     case "pipeline_value":
       return { value: await getPipelineValue(userId), meta: null };
     case "quote_to_close_rate": {
@@ -450,30 +471,30 @@ export async function getKpiValue(key: string, userId?: string) {
       return { value: total > 0 ? 0.72 : 0, meta: { total } };
     }
     case "leads_mtd": {
-      const result = await getLeadsMetrics(userId);
+      const result = await getLeadsMetrics(userId, startDate, endDate);
       return { value: result.leads, meta: result };
     }
     case "booking_rate": {
-      const result = await getLeadsMetrics(userId);
+      const result = await getLeadsMetrics(userId, startDate, endDate);
       return { value: result.bookingRate, meta: result };
     }
     case "demo_rate": {
-      const result = await getLeadsMetrics(userId);
+      const result = await getLeadsMetrics(userId, startDate, endDate);
       return { value: result.demoRate, meta: result };
     }
     case "cost_per_lead": {
-      const leadSources = await getLeadSourcesBreakdown();
+      const leadSources = await getLeadSourcesBreakdown(startDate, endDate);
       const totalCost = leadSources.reduce((sum, source) => sum + source.cost, 0);
       const totalLeads = leadSources.reduce((sum, source) => sum + source.leads, 0);
       return { value: totalLeads > 0 ? totalCost / totalLeads : 0, meta: null };
     }
     case "revenue_per_lead": {
-      const result = await getLeadsMetrics(userId);
-      const revenue = await getRevenue(userId, "mtd");
+      const result = await getLeadsMetrics(userId, startDate, endDate);
+      const revenue = await getRevenue(userId, "mtd", startDate, endDate);
       return { value: result.leads > 0 ? revenue / result.leads : 0, meta: null };
     }
     case "lead_to_close": {
-      const result = await getLeadsMetrics(userId);
+      const result = await getLeadsMetrics(userId, startDate, endDate);
       return { value: result.leadToClose, meta: result };
     }
     case "jobs_completed_mtd": {
@@ -499,13 +520,13 @@ export async function getKpiValue(key: string, userId?: string) {
     case "on_time_rate":
       return { value: 0.92, meta: null };
     case "revenue_vs_goal": {
-      const result = await getRevenueVsGoal();
+      const result = await getRevenueVsGoal({ startDate, endDate });
       return { value: result.percentage, meta: result };
     }
     case "revenue_mtd":
-      return { value: await getRevenue(undefined, "mtd"), meta: null };
+      return { value: await getRevenue(undefined, "mtd", startDate, endDate), meta: null };
     case "revenue_ytd":
-      return { value: await getRevenue(undefined, "ytd"), meta: null };
+      return { value: await getRevenue(undefined, "ytd", startDate, endDate), meta: null };
     case "gross_profit_mtd":
       return { value: await getGrossProfitMtd(), meta: null };
     case "average_gross_margin":
@@ -515,10 +536,10 @@ export async function getKpiValue(key: string, userId?: string) {
   }
 }
 
-export async function getKpiTrend(key: string, userId?: string) {
+export async function getKpiTrend(key: string, userId?: string, startDate?: string, endDate?: string) {
   const now = new Date();
-  const currentStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-  const currentEnd = new Date().toISOString();
+  const currentStart = startDate || new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  const currentEnd = endDate || new Date().toISOString();
   const prev = previousMonthRange();
 
   if (key === "close_ratio") {
@@ -540,7 +561,7 @@ export async function getKpiTrend(key: string, userId?: string) {
   }
 
   if (key === "revenue_mtd" || key === "total_sold_mtd") {
-    const current = await getRevenue(userId, "mtd");
+    const current = await getRevenue(userId, "mtd", startDate, endDate);
     const previousRows = await fetchAllAppointments();
     const scoped = filterAppointmentsByUser(previousRows, userId);
     const prevSales = filterAppointmentsByDate(scoped, prev.start, prev.end).filter(
@@ -550,7 +571,7 @@ export async function getKpiTrend(key: string, userId?: string) {
   }
 
   if (key === "revenue_vs_goal") {
-    const current = await getRevenueVsGoal();
+    const current = await getRevenueVsGoal({ startDate, endDate });
     const previousGoalDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const { data: goal } = await supabase
       .from("company_goals")
@@ -568,7 +589,7 @@ export async function getKpiTrend(key: string, userId?: string) {
     return current.percentage - previousPct;
   }
 
-  const current = await getKpiValue(key, userId);
+  const current = await getKpiValue(key, userId, startDate, endDate);
   const previousValue =
     key === "revenue_mtd" || key === "total_sold_mtd"
       ? sumSaleAmount(await fetchAppointments(userId, prev.start, prev.end))
@@ -576,7 +597,7 @@ export async function getKpiTrend(key: string, userId?: string) {
   return Number(current.value) - previousValue;
 }
 
-export async function getTeamKPIs(): Promise<TeamKpiRow[]> {
+export async function getTeamKPIs(startDate?: string, endDate?: string): Promise<TeamKpiRow[]> {
   const { data } = await supabase
     .from("app_users")
     .select("id, first_name, last_name, location, active, roles(name)")
@@ -618,10 +639,10 @@ export async function getTeamKPIs(): Promise<TeamKpiRow[]> {
       const id = String(row.id);
       const name = [row.first_name, row.last_name].filter(Boolean).join(" ") || "Sales rep";
       const [closeRatio, averageSale, nsli, totalSold] = await Promise.all([
-        getCloseRatio(id),
-        getAverageSale(id),
-        getNSLI(id),
-        getRevenue(id, "mtd"),
+        getCloseRatio(id, startDate, endDate),
+        getAverageSale(id, startDate, endDate),
+        getNSLI(id, startDate, endDate),
+        getRevenue(id, "mtd", startDate, endDate),
       ]);
 
       return {

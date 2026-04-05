@@ -41,6 +41,16 @@ type DashboardMode =
   | "installer"
   | "marketing_manager";
 
+type DateRangeOption =
+  | "this_week"
+  | "this_month"
+  | "last_month"
+  | "this_quarter"
+  | "last_quarter"
+  | "this_year"
+  | "last_year"
+  | "custom";
+
 type WidgetSize = "small" | "medium" | "large";
 
 type WidgetKey =
@@ -107,6 +117,12 @@ type DashboardData = {
     bookingRate: number;
     demoRate: number;
     leadToClose: number;
+  };
+  comparisons: {
+    revenueMtd: number;
+    closeRatio: number;
+    averageSale: number;
+    nsli: number;
   };
 };
 
@@ -195,8 +211,133 @@ function progressColor(value: number) {
   return "#A32D2D";
 }
 
+function startOfDay(date: Date) {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function endOfDay(date: Date) {
+  const next = new Date(date);
+  next.setHours(23, 59, 59, 999);
+  return next;
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function formatDateInputValue(date: Date) {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+function formatComparisonChange(current: number, previous: number, format: KpiDefinition["format"]) {
+  const diff = current - previous;
+  const isPositive = diff >= 0;
+  if (format === "percent") {
+    return `${isPositive ? "↑" : "↓"} ${isPositive ? "+" : "-"}${(Math.abs(diff) * 100).toFixed(1)} pts`;
+  }
+  if (format === "currency") {
+    return `${isPositive ? "↑" : "↓"} ${isPositive ? "+" : "-"}${formatKpiValue(Math.abs(diff), "currency")}`;
+  }
+  return `${isPositive ? "↑" : "↓"} ${isPositive ? "+" : "-"}${Math.abs(diff).toFixed(1)}`;
+}
+
+function getDateRange(option: DateRangeOption, customStart: string, customEnd: string) {
+  const now = new Date();
+  const today = new Date();
+  today.setHours(23, 59, 59, 999);
+
+  switch (option) {
+    case "this_week": {
+      const start = startOfDay(addDays(now, -((now.getDay() + 6) % 7)));
+      return { start, end: today };
+    }
+    case "this_month":
+      return {
+        start: new Date(now.getFullYear(), now.getMonth(), 1),
+        end: today,
+      };
+    case "last_month":
+      return {
+        start: new Date(now.getFullYear(), now.getMonth() - 1, 1),
+        end: endOfDay(new Date(now.getFullYear(), now.getMonth(), 0)),
+      };
+    case "this_quarter": {
+      const quarterStartMonth = Math.floor(now.getMonth() / 3) * 3;
+      return {
+        start: new Date(now.getFullYear(), quarterStartMonth, 1),
+        end: today,
+      };
+    }
+    case "last_quarter": {
+      const quarterStartMonth = Math.floor(now.getMonth() / 3) * 3;
+      const startMonth = quarterStartMonth - 3;
+      return {
+        start: new Date(now.getFullYear(), startMonth, 1),
+        end: endOfDay(new Date(now.getFullYear(), quarterStartMonth, 0)),
+      };
+    }
+    case "this_year":
+      return {
+        start: new Date(now.getFullYear(), 0, 1),
+        end: today,
+      };
+    case "last_year":
+      return {
+        start: new Date(now.getFullYear() - 1, 0, 1),
+        end: endOfDay(new Date(now.getFullYear() - 1, 11, 31)),
+      };
+    case "custom":
+      return {
+        start: customStart ? startOfDay(new Date(`${customStart}T00:00:00`)) : new Date(now.getFullYear(), now.getMonth(), 1),
+        end: customEnd ? endOfDay(new Date(`${customEnd}T00:00:00`)) : today,
+      };
+  }
+}
+
 function EmptyState({ children }: { children: ReactNode }) {
   return <div className="rounded-2xl bg-stone-50 px-4 py-5 text-sm text-stone-500">{children}</div>;
+}
+
+function ComparisonStack({
+  currentValue,
+  previousValue,
+  format,
+  toneClass,
+  enabled,
+}: {
+  currentValue: number;
+  previousValue: number;
+  format: KpiDefinition["format"];
+  toneClass?: string;
+  enabled: boolean;
+}) {
+  return (
+    <>
+      <p className={`text-4xl font-semibold tracking-tight ${toneClass ?? "text-stone-950"}`}>
+        {formatKpiValue(currentValue, format)}
+      </p>
+      {enabled ? (
+        <>
+          <p className="mt-3 text-sm text-stone-400">
+            {formatKpiValue(previousValue, format)} same period last year
+          </p>
+          <p
+            className={`mt-2 text-sm font-medium ${
+              currentValue >= previousValue ? "text-[#2DA44E]" : "text-[#A32D2D]"
+            }`}
+          >
+            {formatComparisonChange(currentValue, previousValue, format)}
+          </p>
+        </>
+      ) : null}
+    </>
+  );
 }
 
 function WidgetShell({
@@ -383,6 +524,10 @@ export default function DashboardPage() {
   const [pinnedCards, setPinnedCards] = useState<PinnedCard[]>([]);
   const [ownerWidgets, setOwnerWidgets] = useState<WidgetLayout[]>([]);
   const [draggedWidget, setDraggedWidget] = useState<WidgetKey | null>(null);
+  const [dateRange, setDateRange] = useState<DateRangeOption>("this_month");
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
+  const [comparePriorYear, setComparePriorYear] = useState(false);
   const [data, setData] = useState<DashboardData>({
     revenueGoal: { actual: 0, target: 0, percentage: 0 },
     revenueMtd: 0,
@@ -397,9 +542,11 @@ export default function DashboardPage() {
     salesByWeek: [],
     leadSources: [],
     marketing: { leads: 0, bookingRate: 0, demoRate: 0, leadToClose: 0 },
+    comparisons: { revenueMtd: 0, closeRatio: 0, averageSale: 0, nsli: 0 },
   });
 
   const mode = dashboardMode(currentUser?.roleName ?? "Owner");
+  const selectedRangePreview = getDateRange(dateRange, customStartDate, customEndDate);
 
   useEffect(() => {
     let isMounted = true;
@@ -413,10 +560,16 @@ export default function DashboardPage() {
 
       const effectiveMode = dashboardMode(user?.roleName ?? "Owner");
       const scopedUserId = effectiveMode === "sales_rep" ? user?.id : undefined;
+      const selectedRange = getDateRange(dateRange, customStartDate, customEndDate);
+      const startDate = selectedRange.start.toISOString();
+      const endDate = selectedRange.end.toISOString();
+      const priorYearStart = new Date(selectedRange.start);
+      priorYearStart.setFullYear(priorYearStart.getFullYear() - 1);
+      const priorYearEnd = new Date(selectedRange.end);
+      priorYearEnd.setFullYear(priorYearEnd.getFullYear() - 1);
       const today = new Date().toISOString().slice(0, 10);
       const todayStart = `${today}T00:00:00.000Z`;
       const todayEnd = `${today}T23:59:59.999Z`;
-      const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
 
       const [
         revenueGoal,
@@ -431,18 +584,22 @@ export default function DashboardPage() {
         teamKpis,
         leadSources,
         marketing,
+        revenuePriorYear,
+        closeRatioPriorYear,
+        averageSalePriorYear,
+        nsliPriorYear,
         pins,
         salesByWeekResponse,
         widgets,
       ] = await Promise.all([
-        getRevenueVsGoal(),
-        getRevenue(scopedUserId, "mtd"),
-        getKpiTrend("revenue_mtd", scopedUserId),
-        getCloseRatio(scopedUserId),
-        getAverageSale(scopedUserId),
-        getKpiTrend("average_sale", scopedUserId),
-        getNSLI(scopedUserId),
-        getKpiTrend("nsli", scopedUserId),
+        getRevenueVsGoal({ startDate, endDate }),
+        getRevenue(scopedUserId, "mtd", startDate, endDate),
+        getKpiTrend("revenue_mtd", scopedUserId, startDate, endDate),
+        getCloseRatio(scopedUserId, startDate, endDate),
+        getAverageSale(scopedUserId, startDate, endDate),
+        getKpiTrend("average_sale", scopedUserId, startDate, endDate),
+        getNSLI(scopedUserId, startDate, endDate),
+        getKpiTrend("nsli", scopedUserId, startDate, endDate),
         supabase
           .from("appointments")
           .select(`
@@ -456,14 +613,19 @@ export default function DashboardPage() {
           .gte("scheduled_at", todayStart)
           .lte("scheduled_at", todayEnd)
           .order("scheduled_at", { ascending: true }),
-        getTeamKPIs(),
-        getLeadSourcesBreakdown(),
-        getLeadsMetrics(scopedUserId),
+        getTeamKPIs(startDate, endDate),
+        getLeadSourcesBreakdown(startDate, endDate),
+        getLeadsMetrics(scopedUserId, startDate, endDate),
+        getRevenue(scopedUserId, "mtd", priorYearStart.toISOString(), priorYearEnd.toISOString()),
+        getCloseRatio(scopedUserId, priorYearStart.toISOString(), priorYearEnd.toISOString()),
+        getAverageSale(scopedUserId, priorYearStart.toISOString(), priorYearEnd.toISOString()),
+        getNSLI(scopedUserId, priorYearStart.toISOString(), priorYearEnd.toISOString()),
         user ? getPinnedKpis(user.id) : Promise.resolve([]),
         supabase
           .from("appointments")
           .select("sale_amount, sold, scheduled_at")
-          .gte("scheduled_at", monthStart)
+          .gte("scheduled_at", startDate)
+          .lte("scheduled_at", endDate)
           .order("scheduled_at", { ascending: true }),
         user && effectiveMode === "owner" ? loadOwnerWidgets(user.id) : Promise.resolve([]),
       ]);
@@ -525,8 +687,8 @@ export default function DashboardPage() {
               const definition = kpiDefinitions.find((item) => item.key === pin.kpi_key);
               if (!definition) return null;
               const [value, trend] = await Promise.all([
-                getKpiValue(pin.kpi_key, user.id),
-                getKpiTrend(pin.kpi_key, user.id),
+                getKpiValue(pin.kpi_key, user.id, startDate, endDate),
+                getKpiTrend(pin.kpi_key, user.id, startDate, endDate),
               ]);
               return {
                 id: pin.id,
@@ -567,6 +729,12 @@ export default function DashboardPage() {
           demoRate: marketing.demoRate,
           leadToClose: marketing.leadToClose,
         },
+        comparisons: {
+          revenueMtd: revenuePriorYear,
+          closeRatio: closeRatioPriorYear.ratio,
+          averageSale: averageSalePriorYear.average,
+          nsli: nsliPriorYear.nsli,
+        },
       });
 
       setLoading(false);
@@ -577,7 +745,7 @@ export default function DashboardPage() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [comparePriorYear, customEndDate, customStartDate, dateRange]);
 
   async function unpinKpi(id: string) {
     await supabase.from("user_dashboard_pins").delete().eq("id", id);
@@ -640,7 +808,7 @@ export default function DashboardPage() {
         return (
           <WidgetShell
             key={widget.widgetKey}
-            title={`${monthLabel()} Revenue Goal: ${formatKpiValue(data.revenueGoal.target, "currency")}`}
+            title={`${monthLabel(selectedRangePreview.start)} Revenue Goal: ${formatKpiValue(data.revenueGoal.target, "currency")}`}
             size={widget.size}
             onResize={() => void cycleWidgetSize(widget.widgetKey)}
             onRemove={() => void removeWidget(widget.widgetKey)}
@@ -706,13 +874,18 @@ export default function DashboardPage() {
               setDraggedWidget(null);
             }}
           >
-            <p className="text-4xl font-semibold tracking-tight text-stone-950">
-              {formatKpiValue(data.revenueMtd, "currency")}
-            </p>
-            <p className={`mt-4 text-sm font-medium ${data.revenueTrend >= 0 ? "text-[#2DA44E]" : "text-[#A32D2D]"}`}>
-              {data.revenueTrend >= 0 ? "Above" : "Below"} last month by{" "}
-              {formatKpiValue(Math.abs(data.revenueTrend), "currency")}
-            </p>
+            <ComparisonStack
+              currentValue={data.revenueMtd}
+              previousValue={data.comparisons.revenueMtd}
+              format="currency"
+              enabled={comparePriorYear}
+            />
+            {!comparePriorYear ? (
+              <p className={`mt-4 text-sm font-medium ${data.revenueTrend >= 0 ? "text-[#2DA44E]" : "text-[#A32D2D]"}`}>
+                {data.revenueTrend >= 0 ? "Above" : "Below"} last month by{" "}
+                {formatKpiValue(Math.abs(data.revenueTrend), "currency")}
+              </p>
+            ) : null}
           </WidgetShell>
         );
 
@@ -731,9 +904,13 @@ export default function DashboardPage() {
               setDraggedWidget(null);
             }}
           >
-            <p className={`text-4xl font-semibold tracking-tight ${metricTone(data.closeRatio.ratio, 0.48)}`}>
-              {formatKpiValue(data.closeRatio.ratio, "percent")}
-            </p>
+            <ComparisonStack
+              currentValue={data.closeRatio.ratio}
+              previousValue={data.comparisons.closeRatio}
+              format="percent"
+              toneClass={metricTone(data.closeRatio.ratio, 0.48)}
+              enabled={comparePriorYear}
+            />
             <p className="mt-4 text-sm text-stone-500">
               {data.closeRatio.sold} of {data.closeRatio.total} leads closed
             </p>
@@ -755,11 +932,15 @@ export default function DashboardPage() {
               setDraggedWidget(null);
             }}
           >
-            <p className={`text-4xl font-semibold tracking-tight ${metricTone(data.averageSale.average, 7000)}`}>
-              {formatKpiValue(data.averageSale.average, "currency")}
-            </p>
-            <p className={`mt-4 text-sm ${data.averageSaleTrend >= 0 ? "text-[#2DA44E]" : "text-[#A32D2D]"}`}>
-              {data.averageSale.count} sold appointments this month
+            <ComparisonStack
+              currentValue={data.averageSale.average}
+              previousValue={data.comparisons.averageSale}
+              format="currency"
+              toneClass={metricTone(data.averageSale.average, 7000)}
+              enabled={comparePriorYear}
+            />
+            <p className={`mt-4 text-sm ${!comparePriorYear ? (data.averageSaleTrend >= 0 ? "text-[#2DA44E]" : "text-[#A32D2D]") : "text-stone-500"}`}>
+              {data.averageSale.count} sold appointments in range
             </p>
           </WidgetShell>
         );
@@ -779,11 +960,14 @@ export default function DashboardPage() {
               setDraggedWidget(null);
             }}
           >
-            <p className="text-4xl font-semibold tracking-tight text-stone-950">
-              {formatKpiValue(data.nsli.nsli, "currency")}
-            </p>
-            <p className={`mt-4 text-sm ${data.nsliTrend >= 0 ? "text-[#2DA44E]" : "text-[#A32D2D]"}`}>
-              {data.nsli.leadsIssued} non-cancelled leads this month
+            <ComparisonStack
+              currentValue={data.nsli.nsli}
+              previousValue={data.comparisons.nsli}
+              format="currency"
+              enabled={comparePriorYear}
+            />
+            <p className={`mt-4 text-sm ${!comparePriorYear ? (data.nsliTrend >= 0 ? "text-[#2DA44E]" : "text-[#A32D2D]") : "text-stone-500"}`}>
+              {data.nsli.leadsIssued} non-cancelled leads in range
             </p>
           </WidgetShell>
         );
@@ -910,7 +1094,7 @@ export default function DashboardPage() {
     );
   }
 
-  function renderFallbackDashboard() {
+function renderFallbackDashboard() {
     return (
       <div className="grid gap-5 xl:grid-cols-4">
         <div className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm">
@@ -1004,7 +1188,64 @@ export default function DashboardPage() {
       <Sidebar current="Dashboard" />
 
       <section className="flex min-h-screen flex-1 flex-col">
-        <Topbar title="Dashboard" actionLabel="New quote" actionHref="/quotes/new" />
+        <Topbar
+          title="Dashboard"
+          actionLabel="New quote"
+          actionHref="/quotes/new"
+          actions={
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              <select
+                value={dateRange}
+                onChange={(event) => setDateRange(event.target.value as DateRangeOption)}
+                className="h-11 rounded-xl border border-stone-200 px-3 text-sm text-stone-700"
+              >
+                <option value="this_week">This week</option>
+                <option value="this_month">This month</option>
+                <option value="last_month">Last month</option>
+                <option value="this_quarter">This quarter</option>
+                <option value="last_quarter">Last quarter</option>
+                <option value="this_year">This year</option>
+                <option value="last_year">Last year</option>
+                <option value="custom">Custom range</option>
+              </select>
+
+              {dateRange === "custom" ? (
+                <>
+                  <input
+                    type="date"
+                    value={customStartDate}
+                    onChange={(event) => setCustomStartDate(event.target.value)}
+                    className="h-11 rounded-xl border border-stone-200 px-3 text-sm text-stone-700"
+                  />
+                  <input
+                    type="date"
+                    value={customEndDate}
+                    onChange={(event) => setCustomEndDate(event.target.value)}
+                    className="h-11 rounded-xl border border-stone-200 px-3 text-sm text-stone-700"
+                  />
+                </>
+              ) : null}
+
+              <label className="flex h-11 items-center gap-2 rounded-xl border border-stone-200 px-3 text-sm text-stone-700">
+                <span>vs prior year</span>
+                <button
+                  type="button"
+                  aria-pressed={comparePriorYear}
+                  onClick={() => setComparePriorYear((current) => !current)}
+                  className={`relative h-6 w-11 rounded-full transition ${
+                    comparePriorYear ? "bg-primary" : "bg-stone-300"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition ${
+                      comparePriorYear ? "left-[22px]" : "left-0.5"
+                    }`}
+                  />
+                </button>
+              </label>
+            </div>
+          }
+        />
 
         <div className="flex-1 space-y-8 p-8">
           <PinnedKpisRow cards={pinnedCards} onUnpin={unpinKpi} />

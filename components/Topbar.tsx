@@ -6,6 +6,7 @@ type TopbarProps = {
   actionLabel?: string;
   actionHref?: string;
   actionOnClick?: () => void;
+  actions?: ReactNode;
   titleAdornment?: ReactNode;
   titlePrefix?: ReactNode;
 };
@@ -15,6 +16,7 @@ export function Topbar({
   actionLabel,
   actionHref,
   actionOnClick,
+  actions,
   titleAdornment,
   titlePrefix,
 }: TopbarProps) {
@@ -33,24 +35,28 @@ export function Topbar({
         </div>
       </div>
 
-      {actionLabel && actionHref ? (
-        <Link
-          href={actionHref}
-          className="rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:opacity-95"
-        >
-          {actionLabel}
-        </Link>
-      ) : null}
+      <div className="flex items-center gap-3">
+        {actions}
 
-      {actionLabel && !actionHref ? (
-        <button
-          type="button"
-          onClick={actionOnClick}
-          className="rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:opacity-95"
-        >
-          {actionLabel}
-        </button>
-      ) : null}
+        {actionLabel && actionHref ? (
+          <Link
+            href={actionHref}
+            className="rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:opacity-95"
+          >
+            {actionLabel}
+          </Link>
+        ) : null}
+
+        {actionLabel && !actionHref ? (
+          <button
+            type="button"
+            onClick={actionOnClick}
+            className="rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:opacity-95"
+          >
+            {actionLabel}
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
