@@ -144,6 +144,7 @@ function formatTime(dateStr: string): string {
   return new Date(dateStr).toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
+    timeZone: "America/Phoenix",
   });
 }
 
@@ -162,9 +163,7 @@ function fullAddress(c: Customer | null, jobAddress?: string | null): string {
 }
 
 function abbrevAddress(c: Customer | null, jobAddress?: string | null): string {
-  const addr = jobAddress || c?.address || "";
-  if (addr.length > 28) return addr.slice(0, 26) + "…";
-  return addr;
+  return fullAddress(c, jobAddress);
 }
 
 function installerName(inst: Installer | null): string {
@@ -182,7 +181,9 @@ function installerInitials(inst: Installer | null): string {
 function jobMinutesFromMidnight(job: Job): number {
   if (!job.scheduled_at) return TIMELINE_START * 60;
   const d = new Date(job.scheduled_at);
-  return d.getHours() * 60 + d.getMinutes();
+  // Convert to Arizona time (America/Phoenix, MST = UTC-7, no DST)
+  const azTime = new Date(d.toLocaleString("en-US", { timeZone: "America/Phoenix" }));
+  return azTime.getHours() * 60 + azTime.getMinutes();
 }
 
 function formatDuration(mins: number): string {
@@ -286,7 +287,13 @@ export default function DispatchPage() {
         .order("scheduled_at", { ascending: true });
 
       const rows = (retry.data ?? []) as Array<Record<string, unknown>>;
-      setJobs(rows.map((j) => ({
+      const seen = new Set<string>();
+      setJobs(rows.filter((j) => {
+        const id = String(j.id ?? "");
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      }).map((j) => ({
         id: String(j.id ?? ""),
         customer_id: String(j.customer_id ?? ""),
         project_id: (j.project_id as string) ?? null,
@@ -311,7 +318,13 @@ export default function DispatchPage() {
     }
 
     const rows = (data ?? []) as Array<Record<string, unknown>>;
-    setJobs(rows.map((j) => {
+    const seen = new Set<string>();
+    setJobs(rows.filter((j) => {
+      const id = String(j.id ?? "");
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    }).map((j) => {
       const c = j.customers as Record<string, unknown> | null;
       const u = j.app_users as Record<string, unknown> | null;
       return {
@@ -360,7 +373,7 @@ export default function DispatchPage() {
       if (!isMounted) return;
       setCurrentUser(user);
 
-      // Fetch installers: try by role_id first, fall back to role name join
+      // Fetch installers by role_id, with fallbacks for active filter and role name join
       const INSTALLER_ROLE_ID = "00000000-0000-0000-0000-000000000007";
       const { data: byRoleId } = await supabase
         .from("app_users")
@@ -371,12 +384,21 @@ export default function DispatchPage() {
 
       let installerRows = (byRoleId as Array<Record<string, unknown>> | null) ?? [];
 
+      // If active filter returned nothing, retry without it
+      if (installerRows.length === 0) {
+        const { data: byRoleOnly } = await supabase
+          .from("app_users")
+          .select("id, auth_user_id, first_name, last_name, location, phone")
+          .eq("role_id", INSTALLER_ROLE_ID)
+          .order("first_name", { ascending: true });
+        installerRows = (byRoleOnly as Array<Record<string, unknown>> | null) ?? [];
+      }
+
       // If role_id didn't match, try joining with roles table
       if (installerRows.length === 0) {
         const { data: byJoin } = await supabase
           .from("app_users")
           .select("id, auth_user_id, first_name, last_name, location, phone, roles(name)")
-          .eq("active", true)
           .order("first_name", { ascending: true });
 
         installerRows = ((byJoin as Array<Record<string, unknown>> | null) ?? []).filter((r) => {
