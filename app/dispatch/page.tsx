@@ -144,15 +144,17 @@ function formatTime(dateStr: string): string {
   return new Date(dateStr).toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
+    hour12: true,
     timeZone: "America/Phoenix",
   });
 }
 
 function customerDisplayName(c: Customer | null, jobNotes?: string | null): string {
   if (!c) return jobNotes || "Unknown";
-  if (c.name) return c.name;
   const full = [c.first_name, c.last_name].filter(Boolean).join(" ");
-  return full || jobNotes || "Unknown";
+  if (full) return full;
+  if (c.name) return c.name;
+  return jobNotes || "Unknown";
 }
 
 function fullAddress(c: Customer | null, jobAddress?: string | null): string {
@@ -275,6 +277,7 @@ export default function DispatchPage() {
       `)
       .gte("scheduled_at", startOfDay.toISOString())
       .lte("scheduled_at", endOfDay.toISOString())
+      .in("status", ["scheduled", "in_progress"])
       .order("scheduled_at", { ascending: true });
 
     if (error) {
@@ -284,6 +287,7 @@ export default function DispatchPage() {
         .select("*")
         .gte("scheduled_at", startOfDay.toISOString())
         .lte("scheduled_at", endOfDay.toISOString())
+        .in("status", ["scheduled", "in_progress"])
         .order("scheduled_at", { ascending: true });
 
       const rows = (retry.data ?? []) as Array<Record<string, unknown>>;

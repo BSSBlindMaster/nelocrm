@@ -451,6 +451,8 @@ export default function CalendarPage() {
             {
               hour: "numeric",
               minute: "2-digit",
+              hour12: true,
+              timeZone: "America/Phoenix",
             },
           ),
           installerId: String(project.assigned_installer_id ?? installer?.id ?? ""),

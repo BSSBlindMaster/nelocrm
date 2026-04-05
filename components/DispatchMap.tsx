@@ -102,7 +102,7 @@ export default function DispatchMap({ jobs, selectedJobId, onJobClick }: Dispatc
         <div style="font-family:system-ui;font-size:13px;max-width:220px;">
           <strong>${job.customer_name}</strong><br/>
           <span style="color:#666">${job.address}</span><br/>
-          <span>${job.scheduled_at ? new Date(job.scheduled_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Phoenix" }) : "Unscheduled"}</span><br/>
+          <span>${job.scheduled_at ? new Date(job.scheduled_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/Phoenix" }) : "Unscheduled"}</span><br/>
           <span>Installer: ${job.installer_name}</span><br/>
           <span style="color:${color};font-weight:600;text-transform:capitalize">${job.status.replace("_", " ")}</span>
         </div>

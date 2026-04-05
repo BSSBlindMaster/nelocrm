@@ -29,8 +29,19 @@ export function addMonths(date: Date, months: number) {
 }
 
 export function toDateKey(date: Date | string) {
-  const normalized = typeof date === "string" ? new Date(date) : date;
-  return normalized.toISOString().slice(0, 10);
+  if (typeof date === "string") {
+    // If already a date-only string like "2026-04-05", return as-is
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) return date;
+    const normalized = new Date(date);
+    const y = normalized.getFullYear();
+    const m = String(normalized.getMonth() + 1).padStart(2, "0");
+    const d = String(normalized.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
 export function fromDateKey(value: string) {
