@@ -47,6 +47,28 @@ type AppointmentRow = {
   date?: string | null;
   ran?: boolean | null;
   lead_source?: string | null;
+  app_users?: {
+    id?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+    location?: string | null;
+    roles?: {
+      name?: string | null;
+    } | null;
+  } | null;
+};
+
+type TeamKpiRow = {
+  user: {
+    id: string;
+    name: string;
+    roleName: string;
+    location: string;
+  };
+  closeRatio: number;
+  averageSale: number;
+  nsli: number;
+  totalSold: number;
 };
 
 const SAMPLE_APPOINTMENTS: AppointmentRow[] = [
@@ -102,6 +124,20 @@ function previousMonthRange() {
   return { start, end };
 }
 
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1).toISOString();
+}
+
+function startOfPreviousMonth() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+}
+
+function endOfCurrentMonth() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
+}
+
 function resolveAssignedUser(row: AppointmentRow) {
   return row.assigned_to || row.rep_user_id || "";
 }
@@ -145,6 +181,33 @@ async function fetchAppointments(userId?: string, start?: string, end?: string) 
   return filteredRows.length > 0 ? filteredRows : scopedRows;
 }
 
+function filterAppointmentsByUser(rows: AppointmentRow[], userId?: string) {
+  if (!userId) {
+    return rows;
+  }
+
+  return rows.filter((row) => resolveAssignedUser(row) === userId);
+}
+
+function filterAppointmentsByDate(rows: AppointmentRow[], start?: string, end?: string) {
+  return rows.filter((row) => inRange(row, start, end));
+}
+
+async function fetchAllAppointments() {
+  const { data, error } = await supabase
+    .from("appointments")
+    .select("id, sold, sale_amount, status, assigned_to, rep_user_id, scheduled_at, date, ran, lead_source");
+
+  const rows = (data as AppointmentRow[] | null) ?? [];
+  console.log(`[KPIs] appointments found during query: ${rows.length}`);
+
+  if (!error && rows.length > 0) {
+    return rows;
+  }
+
+  return SAMPLE_APPOINTMENTS;
+}
+
 function sumSaleAmount(rows: AppointmentRow[]) {
   return rows.reduce((sum, row) => sum + Number(row.sale_amount ?? 0), 0);
 }
@@ -152,18 +215,28 @@ function sumSaleAmount(rows: AppointmentRow[]) {
 export async function getCloseRatio(userId?: string, startDate?: string, endDate?: string) {
   const start = startDate || startOfCurrentMonth();
   const end = endDate || new Date().toISOString();
-  const data = await fetchAppointments(userId, start, end);
-  if (data.length === 0) return { ratio: 0.48, sold: 12, total: 25 };
+  const allRows = await fetchAllAppointments();
+  const scopedRows = filterAppointmentsByUser(allRows, userId);
+  const dateRows = filterAppointmentsByDate(scopedRows, start, end);
+  const data = (dateRows.length > 0 ? dateRows : scopedRows).filter((row) => row.ran || row.sold);
+
+  if (data.length === 0) {
+    return { ratio: 0.48, sold: 12, total: 25 };
+  }
+
   const sold = data.filter((a) => a.sold).length;
-  const total = data.filter((a) => a.ran).length;
+  const total = data.length;
   return { ratio: total > 0 ? sold / total : 0, sold, total };
 }
 
 export async function getAverageSale(userId?: string, startDate?: string, endDate?: string) {
   const start = startDate || startOfCurrentMonth();
   const end = endDate || new Date().toISOString();
-  const data = await fetchAppointments(userId, start, end);
-  const soldRows = data.filter((a) => a.sold && Number(a.sale_amount ?? 0) > 0);
+  const allRows = await fetchAllAppointments();
+  const scopedRows = filterAppointmentsByUser(allRows, userId);
+  const dateRows = filterAppointmentsByDate(scopedRows, start, end);
+  const baseRows = dateRows.length > 0 ? dateRows : scopedRows;
+  const soldRows = baseRows.filter((a) => a.sold && Number(a.sale_amount ?? 0) > 0);
   if (soldRows.length === 0) return { average: 7125, count: 4, total: 28500 };
   const total = sumSaleAmount(soldRows);
   return { average: total / soldRows.length, count: soldRows.length, total };
@@ -172,9 +245,12 @@ export async function getAverageSale(userId?: string, startDate?: string, endDat
 export async function getNSLI(userId?: string, startDate?: string, endDate?: string) {
   const start = startDate || startOfCurrentMonth();
   const end = endDate || new Date().toISOString();
-  const data = await fetchAppointments(userId, start, end);
-  if (data.length === 0) return { nsli: 2840, totalSold: 42600, leadsIssued: 15 };
+  const allRows = await fetchAllAppointments();
+  const scopedRows = filterAppointmentsByUser(allRows, userId);
+  const dateRows = filterAppointmentsByDate(scopedRows, start, end);
+  const data = dateRows.length > 0 ? dateRows : scopedRows;
   const eligible = data.filter((a) => a.status !== "cancelled");
+  if (eligible.length === 0) return { nsli: 2840, totalSold: 42600, leadsIssued: 15 };
   const totalSold = sumSaleAmount(eligible.filter((a) => a.sold));
   const leadsIssued = eligible.length;
   return { nsli: leadsIssued > 0 ? totalSold / leadsIssued : 0, totalSold, leadsIssued };
@@ -189,16 +265,22 @@ export async function getRevenueVsGoal() {
     .eq("month", now.getMonth() + 1)
     .maybeSingle();
 
-  const sales = await fetchAppointments(undefined, startOfCurrentMonth(), new Date().toISOString());
-  const actual = sumSaleAmount(sales.filter((s) => s.sold && Number(s.sale_amount ?? 0) > 0));
+  const allRows = await fetchAllAppointments();
+  const sales = filterAppointmentsByDate(allRows, startOfCurrentMonth(), new Date().toISOString())
+    .filter((row) => row.sold && Number(row.sale_amount ?? 0) > 0);
+  const actual = sumSaleAmount(sales);
   const target = Number((goal as { target_revenue?: number | null } | null)?.target_revenue ?? 0);
   return { actual, target, percentage: target > 0 ? actual / target : 0 };
 }
 
 export async function getRevenue(userId?: string, scope: "mtd" | "ytd" = "mtd") {
   const start = scope === "mtd" ? startOfCurrentMonth() : startOfCurrentYear();
-  const rows = await fetchAppointments(userId, start, new Date().toISOString());
-  const soldRows = rows.filter((row) => row.sold && Number(row.sale_amount ?? 0) > 0);
+  const allRows = await fetchAllAppointments();
+  const scopedRows = filterAppointmentsByUser(allRows, userId);
+  const dateRows = filterAppointmentsByDate(scopedRows, start, new Date().toISOString());
+  const soldRows = (dateRows.length > 0 ? dateRows : scopedRows).filter(
+    (row) => row.sold && Number(row.sale_amount ?? 0) > 0,
+  );
   if (soldRows.length === 0) {
     return scope === "mtd" ? 142000 : 824000;
   }
@@ -237,16 +319,18 @@ export async function getQuotesStats() {
 }
 
 export async function getLeadsMetrics(userId?: string) {
-  const current = await fetchAppointments(userId, startOfCurrentMonth(), new Date().toISOString());
+  const allRows = await fetchAllAppointments();
+  const scopedRows = filterAppointmentsByUser(allRows, userId);
+  const current = filterAppointmentsByDate(scopedRows, startOfCurrentMonth(), new Date().toISOString());
   const previous = previousMonthRange();
-  const previousRows = await fetchAppointments(userId, previous.start, previous.end);
+  const previousRows = filterAppointmentsByDate(scopedRows, previous.start, previous.end);
   const booked = current.filter((row) => row.status !== "cancelled").length;
   const ran = current.filter((row) => row.ran).length;
   const sold = current.filter((row) => row.sold).length;
   return {
     leads: booked,
     previousLeads: previousRows.length,
-    bookingRate: booked > 0 ? booked / booked : 1,
+    bookingRate: booked > 0 ? booked / current.length : 0,
     demoRate: booked > 0 ? ran / booked : 0,
     leadToClose: booked > 0 ? sold / booked : 0,
   };
@@ -449,12 +533,111 @@ export async function getKpiTrend(key: string, userId?: string) {
     return current.average - previous.average;
   }
 
+  if (key === "nsli") {
+    const current = await getNSLI(userId, currentStart, currentEnd);
+    const previous = await getNSLI(userId, prev.start, prev.end);
+    return current.nsli - previous.nsli;
+  }
+
+  if (key === "revenue_mtd" || key === "total_sold_mtd") {
+    const current = await getRevenue(userId, "mtd");
+    const previousRows = await fetchAllAppointments();
+    const scoped = filterAppointmentsByUser(previousRows, userId);
+    const prevSales = filterAppointmentsByDate(scoped, prev.start, prev.end).filter(
+      (row) => row.sold && Number(row.sale_amount ?? 0) > 0,
+    );
+    return current - sumSaleAmount(prevSales);
+  }
+
+  if (key === "revenue_vs_goal") {
+    const current = await getRevenueVsGoal();
+    const previousGoalDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const { data: goal } = await supabase
+      .from("company_goals")
+      .select("target_revenue")
+      .eq("year", previousGoalDate.getFullYear())
+      .eq("month", previousGoalDate.getMonth() + 1)
+      .maybeSingle();
+    const previousRows = await fetchAllAppointments();
+    const prevSales = filterAppointmentsByDate(previousRows, prev.start, prev.end).filter(
+      (row) => row.sold && Number(row.sale_amount ?? 0) > 0,
+    );
+    const previousActual = sumSaleAmount(prevSales);
+    const previousTarget = Number((goal as { target_revenue?: number | null } | null)?.target_revenue ?? 0);
+    const previousPct = previousTarget > 0 ? previousActual / previousTarget : 0;
+    return current.percentage - previousPct;
+  }
+
   const current = await getKpiValue(key, userId);
   const previousValue =
     key === "revenue_mtd" || key === "total_sold_mtd"
       ? sumSaleAmount(await fetchAppointments(userId, prev.start, prev.end))
       : 0;
   return Number(current.value) - previousValue;
+}
+
+export async function getTeamKPIs(): Promise<TeamKpiRow[]> {
+  const { data } = await supabase
+    .from("app_users")
+    .select("id, first_name, last_name, location, active, roles(name)")
+    .eq("active", true)
+    .order("first_name", { ascending: true });
+
+  const rows =
+    (data as Array<{
+      id?: string | null;
+      first_name?: string | null;
+      last_name?: string | null;
+      location?: string | null;
+      roles?: { name?: string | null } | null;
+    }> | null) ?? [];
+
+  const reps = rows.filter((row) => ["Sales Rep", "Sales Manager"].includes(row.roles?.name ?? "") && row.id);
+
+  if (reps.length === 0) {
+    return [
+      {
+        user: { id: "sample-rep-1", name: "Natasha Reed", roleName: "Sales Rep", location: "Ellsworth" },
+        closeRatio: 0.52,
+        averageSale: 7820,
+        nsli: 3160,
+        totalSold: 54740,
+      },
+      {
+        user: { id: "sample-rep-2", name: "Ed Ramirez", roleName: "Sales Rep", location: "Lindsay" },
+        closeRatio: 0.44,
+        averageSale: 6915,
+        nsli: 2845,
+        totalSold: 48320,
+      },
+    ];
+  }
+
+  return Promise.all(
+    reps.map(async (row) => {
+      const id = String(row.id);
+      const name = [row.first_name, row.last_name].filter(Boolean).join(" ") || "Sales rep";
+      const [closeRatio, averageSale, nsli, totalSold] = await Promise.all([
+        getCloseRatio(id),
+        getAverageSale(id),
+        getNSLI(id),
+        getRevenue(id, "mtd"),
+      ]);
+
+      return {
+        user: {
+          id,
+          name,
+          roleName: row.roles?.name ?? "",
+          location: row.location ?? "",
+        },
+        closeRatio: closeRatio.ratio,
+        averageSale: averageSale.average,
+        nsli: nsli.nsli,
+        totalSold,
+      };
+    }),
+  );
 }
 
 export async function getPinnedKpis(userId: string) {

@@ -34,6 +34,7 @@ import {
   getQuotesStats,
   getRevenue,
   getRevenueVsGoal,
+  getTeamKPIs,
   kpiDefinitions,
   type KpiDefinition,
 } from "@/lib/kpis";
@@ -77,6 +78,7 @@ type AppointmentSummary = {
   customerName: string;
   address: string;
   repName: string;
+  status: string;
   sold: boolean;
   saleAmount: number;
 };
@@ -354,6 +356,8 @@ export default function DashboardPage() {
 
       const now = new Date();
       const today = now.toISOString().slice(0, 10);
+      const todayStart = `${today}T00:00:00.000Z`;
+      const todayEnd = `${today}T23:59:59.999Z`;
       const currentMonthStart = startOfCurrentMonth().toISOString();
       const previousMonthStart = startOfPreviousMonth().toISOString();
       const previousMonthEnd = endOfPreviousMonth().toISOString();
@@ -410,6 +414,7 @@ export default function DashboardPage() {
             slot,
             date,
             scheduled_at,
+            status,
             sold,
             sale_amount,
             rep_user_id,
@@ -417,9 +422,9 @@ export default function DashboardPage() {
             customers(name, first_name, last_name, address, city, state, zip),
             app_users(first_name, last_name)
           `)
-          .gte("date", today)
-          .lte("date", today)
-          .order("slot", { ascending: true }),
+          .gte("scheduled_at", todayStart)
+          .lte("scheduled_at", todayEnd)
+          .order("scheduled_at", { ascending: true }),
         supabase
           .from("projects")
           .select("id, location, scheduled_at, install_date, status, assigned_rep_id, total_amount, gross_profit, cogs, labor_cost, commission")
@@ -545,6 +550,7 @@ export default function DashboardPage() {
             [rep?.first_name, rep?.last_name]
               .filter((value) => typeof value === "string" && value)
               .join(" ") || "Sales rep",
+          status: String(appointment.status ?? "scheduled"),
           sold: Boolean(appointment.sold),
           saleAmount: safeNumber(appointment.sale_amount),
         } satisfies AppointmentSummary;
@@ -571,27 +577,22 @@ export default function DashboardPage() {
           ? users.filter((person) => person.location === user.location)
           : users;
 
-      const performanceRows = await Promise.all(
-        managerTeamUsers
-          .filter((person) => ["Sales Rep", "Sales Manager"].includes(person.roleName))
-          .map(async (person) => {
-            const [ratio, avgSaleMetric, nsliMetric, soldRevenue] = await Promise.all([
-              getCloseRatio(person.id),
-              getAverageSale(person.id),
-              getNSLI(person.id),
-              getRevenue(person.id, "mtd"),
-            ]);
-            return {
-              id: person.id,
-              name: person.fullName,
-              initials: initials(person.fullName),
-              closeRatio: ratio.ratio,
-              averageSale: avgSaleMetric.average,
-              nsli: nsliMetric.nsli,
-              totalSold: soldRevenue,
-            } satisfies TeamPerformanceRow;
-          }),
-      );
+      const teamKpis = await getTeamKPIs();
+      const performanceRows = teamKpis
+        .filter((person) =>
+          effectiveMode === "sales_manager" && user?.location
+            ? person.user.location === user.location
+            : true,
+        )
+        .map((person) => ({
+          id: person.user.id,
+          name: person.user.name,
+          initials: initials(person.user.name),
+          closeRatio: person.closeRatio,
+          averageSale: person.averageSale,
+          nsli: person.nsli,
+          totalSold: person.totalSold,
+        } satisfies TeamPerformanceRow));
       setTeamPerformance(performanceRows);
 
       setTeamStatus(
@@ -778,25 +779,27 @@ export default function DashboardPage() {
         setMetrics([
           {
             label: "Revenue MTD",
-            value: formatKpiValue(revenueGoal.actual, "currency"),
-            detail: `${revenueChange.toFixed(1)}% vs last month`,
-            tone: revenueChange >= 0 ? "green" : revenueChange >= -10 ? "amber" : "red",
+            value: formatKpiValue(revenueMtd, "currency"),
+            detail: "Current month closed revenue",
+            tone: revenueGoal.percentage >= 1 ? "green" : revenueGoal.percentage >= 0.9 ? "amber" : "red",
           },
           {
-            label: "Quotes this month",
-            value: String(quoteStats.monthCount),
-            detail: `${quoteChange.toFixed(1)}% vs last month`,
+            label: "Close ratio",
+            value: formatKpiValue(closeRatio.ratio, "percent"),
+            detail: `${closeRatio.sold} of ${closeRatio.total} appointments closed`,
+            tone: closeRatio.ratio >= 0.48 ? "green" : closeRatio.ratio >= 0.432 ? "amber" : "red",
           },
           {
-            label: "Jobs completed this month",
-            value: String(jobsStats.completed),
-            detail: `${jobsStats.averageHours.toFixed(1)} avg hours per job`,
+            label: "Average sale",
+            value: formatKpiValue(averageSale.average, "currency"),
+            detail: "Target $7,000 average sale",
+            tone: averageSale.average >= 7000 ? "green" : averageSale.average >= 6300 ? "amber" : "red",
           },
           {
-            label: "Open quotes",
-            value: String(quoteStats.openQuotes),
-            detail: `${quoteStats.expiringSoon} expiring soon`,
-            tone: quoteStats.expiringSoon > 0 ? "amber" : "default",
+            label: "NSLI",
+            value: formatKpiValue(nsli.nsli, "currency"),
+            detail: "Total sold divided by non-cancelled leads",
+            tone: nsli.nsli >= 3000 ? "green" : nsli.nsli >= 2700 ? "amber" : "red",
           },
         ]);
       }
@@ -904,7 +907,9 @@ export default function DashboardPage() {
                               {appointment.slot} · {appointment.customerName}
                             </p>
                             <p className="mt-1 text-sm text-stone-500">{appointment.address}</p>
-                            <p className="mt-1 text-xs text-stone-400">{appointment.repName}</p>
+                            <p className="mt-1 text-xs text-stone-400">
+                              {appointment.repName} · {appointment.status}
+                            </p>
                           </div>
                         ))
                       ) : (

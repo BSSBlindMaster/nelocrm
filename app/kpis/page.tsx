@@ -23,13 +23,16 @@ export default function KpiLibraryPage() {
   const [currentUser, setCurrentUser] = useState<CurrentAppUser | null>(null);
   const [kpiStates, setKpiStates] = useState<Record<string, KpiCardState>>({});
   const [pinnedKeys, setPinnedKeys] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadKpis() {
+      setLoading(true);
       const user = await getCurrentAppUser();
       setCurrentUser(user);
 
       if (!user) {
+        setLoading(false);
         return;
       }
 
@@ -54,6 +57,7 @@ export default function KpiLibraryPage() {
       setKpiStates(
         Object.fromEntries(values.map((item) => [item.key, item])),
       );
+      setLoading(false);
     }
 
     void loadKpis();
@@ -137,21 +141,27 @@ export default function KpiLibraryPage() {
                       </div>
 
                       <div className="mt-6 flex items-end justify-between gap-3">
-                        <p className="text-3xl font-semibold tracking-tight text-stone-950">
-                          {formatKpiValue(state?.value ?? 0, definition.format)}
-                        </p>
-                        <div className="flex items-center gap-2 text-sm">
-                          {(state?.trend ?? 0) >= 0 ? (
-                            <span className="text-[#2DA44E]">↑</span>
-                          ) : (
-                            <span className="text-[#A32D2D]">↓</span>
-                          )}
-                          <span className={(state?.trend ?? 0) >= 0 ? "text-[#2DA44E]" : "text-[#A32D2D]"}>
-                            {definition.format === "percent"
-                              ? `${(((state?.trend ?? 0) || 0) * 100).toFixed(1)} pts`
-                              : formatKpiValue(Math.abs(state?.trend ?? 0), definition.format)}
-                          </span>
-                        </div>
+                        {loading ? (
+                          <div className="h-10 w-full animate-pulse rounded-xl bg-stone-100" />
+                        ) : (
+                          <>
+                            <p className="text-3xl font-semibold tracking-tight text-stone-950">
+                              {formatKpiValue(state?.value ?? 0, definition.format)}
+                            </p>
+                            <div className="flex items-center gap-2 text-sm">
+                              {(state?.trend ?? 0) >= 0 ? (
+                                <span className="text-[#2DA44E]">↑</span>
+                              ) : (
+                                <span className="text-[#A32D2D]">↓</span>
+                              )}
+                              <span className={(state?.trend ?? 0) >= 0 ? "text-[#2DA44E]" : "text-[#A32D2D]"}>
+                                {definition.format === "percent"
+                                  ? `${(((state?.trend ?? 0) || 0) * 100).toFixed(1)} pts`
+                                  : formatKpiValue(Math.abs(state?.trend ?? 0), definition.format)}
+                              </span>
+                            </div>
+                          </>
+                        )}
                       </div>
                     </article>
                   );
