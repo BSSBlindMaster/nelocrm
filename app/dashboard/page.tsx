@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -13,25 +13,19 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Badge } from "@/components/Badge";
 import { Sidebar } from "@/components/Sidebar";
 import { Topbar } from "@/components/Topbar";
-import { getActiveAppUsers, getCurrentAppUser, type ActiveAppUser, type CurrentAppUser } from "@/lib/current-app-user";
+import { getCurrentAppUser, type CurrentAppUser } from "@/lib/current-app-user";
 import {
   formatKpiValue,
-  getAverageGrossMargin,
   getAverageSale,
   getCloseRatio,
-  getGrossProfitMtd,
-  getJobsCompletedMtd,
   getKpiTrend,
   getKpiValue,
   getLeadSourcesBreakdown,
   getLeadsMetrics,
   getNSLI,
   getPinnedKpis,
-  getPipelineValue,
-  getQuotesStats,
   getRevenue,
   getRevenueVsGoal,
   getTeamKPIs,
@@ -47,13 +41,25 @@ type DashboardMode =
   | "installer"
   | "marketing_manager";
 
-type MetricTone = "green" | "amber" | "red" | "default";
+type WidgetSize = "small" | "medium" | "large";
 
-type MetricCard = {
-  label: string;
-  value: string;
-  detail: string;
-  tone?: MetricTone;
+type WidgetKey =
+  | "revenue_goal_progress"
+  | "revenue_mtd"
+  | "close_ratio"
+  | "average_sale"
+  | "nsli"
+  | "todays_appointments"
+  | "team_performance"
+  | "sales_by_week";
+
+type WidgetLayout = {
+  id?: string;
+  kpi_key: string;
+  widgetKey: WidgetKey;
+  size: WidgetSize;
+  col_span: number;
+  position: number;
 };
 
 type PinnedCard = {
@@ -64,23 +70,12 @@ type PinnedCard = {
   trend: number;
 };
 
-type QuoteSummary = {
-  id: string;
-  customerName: string;
-  status: string;
-  total: number;
-  createdAt: string;
-};
-
 type AppointmentSummary = {
   id: string;
   slot: string;
   customerName: string;
-  address: string;
   repName: string;
   status: string;
-  sold: boolean;
-  saleAmount: number;
 };
 
 type TeamPerformanceRow = {
@@ -91,73 +86,42 @@ type TeamPerformanceRow = {
   averageSale: number;
   nsli: number;
   totalSold: number;
+  location: string;
 };
 
-type TeamStatusRow = {
-  id: string;
-  name: string;
-  status: string;
-  detail: string;
+type DashboardData = {
+  revenueGoal: { actual: number; target: number; percentage: number };
+  revenueMtd: number;
+  revenueTrend: number;
+  closeRatio: { ratio: number; sold: number; total: number };
+  averageSale: { average: number; count: number; total: number };
+  averageSaleTrend: number;
+  nsli: { nsli: number; totalSold: number; leadsIssued: number };
+  nsliTrend: number;
+  todaysAppointments: AppointmentSummary[];
+  teamPerformance: TeamPerformanceRow[];
+  salesByWeek: Array<{ label: string; value: number }>;
+  leadSources: Array<{ source: string; leads: number; revenue: number }>;
+  marketing: {
+    leads: number;
+    bookingRate: number;
+    demoRate: number;
+    leadToClose: number;
+  };
 };
 
-type InstallerSignOff = {
-  id: string;
-  customerName: string;
-  signedAt: string;
-};
+const OWNER_DEFAULT_WIDGETS: Array<{ key: WidgetKey; size: WidgetSize; position: number }> = [
+  { key: "revenue_goal_progress", size: "large", position: 0 },
+  { key: "revenue_mtd", size: "small", position: 1 },
+  { key: "close_ratio", size: "small", position: 2 },
+  { key: "average_sale", size: "small", position: 3 },
+  { key: "nsli", size: "small", position: 4 },
+  { key: "todays_appointments", size: "medium", position: 5 },
+  { key: "team_performance", size: "medium", position: 6 },
+  { key: "sales_by_week", size: "large", position: 7 },
+];
 
-type GoalProgress = {
-  actual: number;
-  target: number;
-  percentage: number;
-  ellsworth: number;
-  lindsay: number;
-};
-
-type MarketingMetrics = {
-  leads: number;
-  previousLeads: number;
-  bookingRate: number;
-  demoRate: number;
-  leadToClose: number;
-};
-
-const PIE_COLORS = ["#FF4900", "#2DA44E", "#BA7517", "#1A6BC4", "#A32D2D", "#7C6F64"];
-
-function monthLabel(date = new Date()) {
-  return date.toLocaleDateString("en-US", { month: "long" });
-}
-
-function formatDate(value: string) {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return "Date unavailable";
-  }
-
-  return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-function initials(name: string) {
-  return name
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("");
-}
-
-function metricToneClass(tone: MetricTone = "default") {
-  if (tone === "green") return "text-[#2DA44E]";
-  if (tone === "amber") return "text-[#BA7517]";
-  if (tone === "red") return "text-[#A32D2D]";
-  return "text-stone-500";
-}
-
-function progressColor(value: number) {
-  if (value >= 1) return "#2DA44E";
-  if (value >= 0.8) return "#BA7517";
-  return "#A32D2D";
-}
+const PIE_COLORS = ["#FF4900", "#2DA44E", "#BA7517", "#1A6BC4", "#A32D2D"];
 
 function dashboardMode(roleName: string): DashboardMode {
   if (roleName === "Sales Manager") return "sales_manager";
@@ -175,75 +139,119 @@ function customerName(record: Record<string, unknown> | null | undefined) {
   return name || [first, last].filter(Boolean).join(" ") || "Customer";
 }
 
+function repName(record: Record<string, unknown> | null | undefined) {
+  if (!record) return "Sales rep";
+  return [record.first_name, record.last_name]
+    .filter((value) => typeof value === "string" && value)
+    .join(" ") || "Sales rep";
+}
+
+function monthLabel(date = new Date()) {
+  return date.toLocaleDateString("en-US", { month: "long" });
+}
+
+function initials(name: string) {
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
 function safeNumber(value: unknown) {
   return typeof value === "number" ? value : Number(value ?? 0);
 }
 
-function formatCurrencyTooltip(value: unknown) {
-  return formatKpiValue(safeNumber(value), "currency");
+function widgetKeyToDb(widgetKey: WidgetKey) {
+  return `widget.${widgetKey}`;
 }
 
-function startOfCurrentMonth() {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), 1);
+function widgetSizeToSpan(size: WidgetSize) {
+  if (size === "large") return 4;
+  if (size === "medium") return 2;
+  return 1;
 }
 
-function startOfPreviousMonth() {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth() - 1, 1);
+function widgetSizeClass(size: WidgetSize) {
+  if (size === "large") {
+    return "col-span-1 md:col-span-2 xl:col-span-4 xl:row-span-2";
+  }
+  if (size === "medium") {
+    return "col-span-1 md:col-span-2 xl:col-span-2 xl:row-span-1";
+  }
+  return "col-span-1 md:col-span-1 xl:col-span-1 xl:row-span-1";
 }
 
-function endOfPreviousMonth() {
-  return startOfCurrentMonth();
+function metricTone(value: number, target: number) {
+  if (value >= target) return "text-[#2DA44E]";
+  if (value >= target * 0.9) return "text-[#BA7517]";
+  return "text-[#A32D2D]";
 }
 
-function withinLastDays(value: string, days: number) {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return false;
-  return Date.now() - parsed.getTime() <= days * 24 * 60 * 60 * 1000;
-}
-
-function weekNumberInMonth(value: string) {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return 1;
-  return Math.min(4, Math.floor((parsed.getDate() - 1) / 7) + 1);
-}
-
-function SummaryCard({
-  title,
-  children,
-  action,
-}: {
-  title: string;
-  children: ReactNode;
-  action?: ReactNode;
-}) {
-  return (
-    <section className="rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="text-lg font-semibold tracking-tight text-stone-950">{title}</h2>
-        {action}
-      </div>
-      <div className="mt-5">{children}</div>
-    </section>
-  );
+function progressColor(value: number) {
+  if (value >= 1) return "#2DA44E";
+  if (value >= 0.8) return "#BA7517";
+  return "#A32D2D";
 }
 
 function EmptyState({ children }: { children: ReactNode }) {
-  return <p className="rounded-2xl bg-stone-50 px-4 py-5 text-sm text-stone-500">{children}</p>;
+  return <div className="rounded-2xl bg-stone-50 px-4 py-5 text-sm text-stone-500">{children}</div>;
 }
 
-function MetricGrid({ metrics }: { metrics: MetricCard[] }) {
+function WidgetShell({
+  title,
+  size,
+  children,
+  onResize,
+  onRemove,
+  onDragStart,
+  onDragOver,
+  onDrop,
+}: {
+  title: string;
+  size: WidgetSize;
+  children: ReactNode;
+  onResize: () => void;
+  onRemove: () => void;
+  onDragStart: () => void;
+  onDragOver: (event: React.DragEvent<HTMLElement>) => void;
+  onDrop: () => void;
+}) {
   return (
-    <div className="grid gap-5 xl:grid-cols-4">
-      {metrics.map((metric) => (
-        <article key={metric.label} className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
-          <p className="text-sm text-stone-500">{metric.label}</p>
-          <p className="mt-4 text-3xl font-semibold tracking-tight text-stone-950">{metric.value}</p>
-          <p className={`mt-3 text-sm ${metricToneClass(metric.tone)}`}>{metric.detail}</p>
-        </article>
-      ))}
-    </div>
+    <article
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      className={`group rounded-3xl border border-stone-200 bg-white p-5 shadow-sm ${widgetSizeClass(size)}`}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <span className="cursor-grab text-sm text-stone-300 opacity-0 transition group-hover:opacity-100">
+            ⋮⋮
+          </span>
+          <h2 className="text-lg font-semibold tracking-tight text-stone-950">{title}</h2>
+        </div>
+        <div className="flex items-center gap-2 opacity-0 transition group-hover:opacity-100">
+          <button
+            type="button"
+            onClick={onResize}
+            className="rounded-full bg-stone-100 px-2.5 py-1 text-xs font-medium text-stone-600"
+          >
+            {size}
+          </button>
+          <button
+            type="button"
+            onClick={onRemove}
+            className="rounded-full bg-stone-100 px-2.5 py-1 text-xs font-medium text-stone-600"
+          >
+            🔖
+          </button>
+        </div>
+      </div>
+      <div className="mt-5 h-[calc(100%-44px)]">{children}</div>
+    </article>
   );
 }
 
@@ -265,10 +273,7 @@ function PinnedKpisRow({
       {cards.length > 0 ? (
         <div className="mt-4 flex gap-4 overflow-x-auto pb-2">
           {cards.map((card) => (
-            <div
-              key={card.id}
-              className="min-w-[220px] rounded-2xl border border-stone-200 bg-stone-50 p-4"
-            >
+            <div key={card.id} className="min-w-[220px] rounded-2xl border border-stone-200 bg-stone-50 p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-sm text-stone-500">{card.definition.label}</p>
@@ -302,533 +307,697 @@ function PinnedKpisRow({
   );
 }
 
+async function loadOwnerWidgets(userId: string) {
+  const { data } = await supabase
+    .from("user_dashboard_pins")
+    .select("id, kpi_key, position, size, col_span")
+    .eq("user_id", userId)
+    .like("kpi_key", "widget.%")
+    .order("position", { ascending: true });
+
+  const rows =
+    (data as Array<{
+      id?: string | null;
+      kpi_key?: string | null;
+      position?: number | null;
+      size?: string | null;
+      col_span?: number | null;
+    }> | null) ?? [];
+
+  if (rows.length > 0) {
+    return rows.map((row) => {
+      const widgetKey = String(row.kpi_key ?? "").replace("widget.", "") as WidgetKey;
+      const size = (row.size as WidgetSize | null) ?? "small";
+      return {
+        id: row.id ?? undefined,
+        kpi_key: row.kpi_key ?? "",
+        widgetKey,
+        size,
+        col_span: row.col_span ?? widgetSizeToSpan(size),
+        position: row.position ?? 0,
+      } satisfies WidgetLayout;
+    });
+  }
+
+  const defaults = OWNER_DEFAULT_WIDGETS.map((widget) => ({
+    user_id: userId,
+    kpi_key: widgetKeyToDb(widget.key),
+    size: widget.size,
+    col_span: widgetSizeToSpan(widget.size),
+    position: widget.position,
+  }));
+
+  await supabase.from("user_dashboard_pins").upsert(defaults, {
+    onConflict: "user_id,kpi_key",
+  });
+
+  return OWNER_DEFAULT_WIDGETS.map((widget) => ({
+    kpi_key: widgetKeyToDb(widget.key),
+    widgetKey: widget.key,
+    size: widget.size,
+    col_span: widgetSizeToSpan(widget.size),
+    position: widget.position,
+  }));
+}
+
+async function saveOwnerWidgets(userId: string, widgets: WidgetLayout[]) {
+  await Promise.all(
+    widgets.map((widget, index) =>
+      supabase.from("user_dashboard_pins").upsert(
+        {
+          user_id: userId,
+          kpi_key: widget.kpi_key,
+          size: widget.size,
+          col_span: widgetSizeToSpan(widget.size),
+          position: index,
+        },
+        { onConflict: "user_id,kpi_key" },
+      ),
+    ),
+  );
+}
+
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<CurrentAppUser | null>(null);
-  const [activeUsers, setActiveUsers] = useState<ActiveAppUser[]>([]);
-  const [metrics, setMetrics] = useState<MetricCard[]>([]);
   const [pinnedCards, setPinnedCards] = useState<PinnedCard[]>([]);
-  const [goal, setGoal] = useState<GoalProgress>({
-    actual: 0,
-    target: 0,
-    percentage: 0,
-    ellsworth: 0,
-    lindsay: 0,
+  const [ownerWidgets, setOwnerWidgets] = useState<WidgetLayout[]>([]);
+  const [draggedWidget, setDraggedWidget] = useState<WidgetKey | null>(null);
+  const [data, setData] = useState<DashboardData>({
+    revenueGoal: { actual: 0, target: 0, percentage: 0 },
+    revenueMtd: 0,
+    revenueTrend: 0,
+    closeRatio: { ratio: 0, sold: 0, total: 0 },
+    averageSale: { average: 0, count: 0, total: 0 },
+    averageSaleTrend: 0,
+    nsli: { nsli: 0, totalSold: 0, leadsIssued: 0 },
+    nsliTrend: 0,
+    todaysAppointments: [],
+    teamPerformance: [],
+    salesByWeek: [],
+    leadSources: [],
+    marketing: { leads: 0, bookingRate: 0, demoRate: 0, leadToClose: 0 },
   });
-  const [appointments, setAppointments] = useState<AppointmentSummary[]>([]);
-  const [quotes, setQuotes] = useState<QuoteSummary[]>([]);
-  const [teamPerformance, setTeamPerformance] = useState<TeamPerformanceRow[]>([]);
-  const [teamStatus, setTeamStatus] = useState<TeamStatusRow[]>([]);
-  const [salesByWeek, setSalesByWeek] = useState<Array<{ label: string; value: number }>>([]);
-  const [leadSources, setLeadSources] = useState<
-    Array<{ source: string; leads: number; appointments: number; sales: number; revenue: number; cost: number; cpl: number; roi: number }>
-  >([]);
-  const [locationComparison, setLocationComparison] = useState<Array<{ name: string; revenue: number }>>([]);
-  const [installerStats, setInstallerStats] = useState({ completed: 0, averageHours: 0, laborHours: 0 });
-  const [recentSignOffs, setRecentSignOffs] = useState<InstallerSignOff[]>([]);
-  const [marketingMetrics, setMarketingMetrics] = useState<MarketingMetrics>({
-    leads: 0,
-    previousLeads: 0,
-    bookingRate: 0,
-    demoRate: 0,
-    leadToClose: 0,
-  });
-  const [pipelineValue, setPipelineValue] = useState(0);
-  const [followUpNeeded, setFollowUpNeeded] = useState(0);
-  const [repGoalAmount, setRepGoalAmount] = useState(70000);
-  const [grossProfitMtd, setGrossProfitMtd] = useState(0);
-  const [avgGrossMargin, setAvgGrossMargin] = useState(0);
 
   const mode = dashboardMode(currentUser?.roleName ?? "Owner");
 
   useEffect(() => {
     let isMounted = true;
 
-    async function load() {
+    async function loadDashboard() {
       setLoading(true);
 
-      const [user, users] = await Promise.all([getCurrentAppUser(), getActiveAppUsers()]);
-
+      const user = await getCurrentAppUser();
       if (!isMounted) return;
-
       setCurrentUser(user);
-      setActiveUsers(users);
 
-      const now = new Date();
-      const today = now.toISOString().slice(0, 10);
+      const effectiveMode = dashboardMode(user?.roleName ?? "Owner");
+      const scopedUserId = effectiveMode === "sales_rep" ? user?.id : undefined;
+      const today = new Date().toISOString().slice(0, 10);
       const todayStart = `${today}T00:00:00.000Z`;
       const todayEnd = `${today}T23:59:59.999Z`;
-      const currentMonthStart = startOfCurrentMonth().toISOString();
-      const previousMonthStart = startOfPreviousMonth().toISOString();
-      const previousMonthEnd = endOfPreviousMonth().toISOString();
-      const effectiveMode = dashboardMode(user?.roleName ?? "Owner");
-      const scopedSalesUserId = effectiveMode === "sales_rep" ? user?.id : undefined;
+      const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
 
       const [
+        revenueGoal,
         revenueMtd,
+        revenueTrend,
         closeRatio,
         averageSale,
+        averageSaleTrend,
         nsli,
-        revenueGoal,
-        quoteStats,
-        pipeline,
-        grossProfit,
-        averageMargin,
-        leadsBreakdown,
-        leadsMetricSet,
-        jobsStats,
+        nsliTrend,
+        todayAppointmentsResponse,
+        teamKpis,
+        leadSources,
+        marketing,
         pins,
-        signOffsResponse,
-        quotesResponse,
-        appointmentsResponse,
-        projectsResponse,
-        businessSettingsResponse,
+        salesByWeekResponse,
+        widgets,
       ] = await Promise.all([
-        getRevenue(scopedSalesUserId, "mtd"),
-        getCloseRatio(scopedSalesUserId),
-        getAverageSale(scopedSalesUserId),
-        getNSLI(scopedSalesUserId),
         getRevenueVsGoal(),
-        getQuotesStats(),
-        getPipelineValue(scopedSalesUserId),
-        getGrossProfitMtd(),
-        getAverageGrossMargin(),
-        getLeadSourcesBreakdown(),
-        getLeadsMetrics(scopedSalesUserId),
-        getJobsCompletedMtd(effectiveMode === "installer" ? user?.id : undefined),
-        user ? getPinnedKpis(user.id) : Promise.resolve([]),
-        supabase
-          .from("install_sign_offs")
-          .select("id, signed_at, customer_name, installer_id")
-          .order("signed_at", { ascending: false })
-          .limit(10),
-        supabase
-          .from("quotes")
-          .select("id, status, total, created_at, notes, customers(name, first_name, last_name)")
-          .order("created_at", { ascending: false })
-          .limit(12),
+        getRevenue(scopedUserId, "mtd"),
+        getKpiTrend("revenue_mtd", scopedUserId),
+        getCloseRatio(scopedUserId),
+        getAverageSale(scopedUserId),
+        getKpiTrend("average_sale", scopedUserId),
+        getNSLI(scopedUserId),
+        getKpiTrend("nsli", scopedUserId),
         supabase
           .from("appointments")
           .select(`
             id,
             slot,
-            date,
-            scheduled_at,
             status,
-            sold,
-            sale_amount,
-            rep_user_id,
-            assigned_to,
-            customers(name, first_name, last_name, address, city, state, zip),
+            scheduled_at,
+            customers(name, first_name, last_name),
             app_users(first_name, last_name)
           `)
           .gte("scheduled_at", todayStart)
           .lte("scheduled_at", todayEnd)
           .order("scheduled_at", { ascending: true }),
+        getTeamKPIs(),
+        getLeadSourcesBreakdown(),
+        getLeadsMetrics(scopedUserId),
+        user ? getPinnedKpis(user.id) : Promise.resolve([]),
         supabase
-          .from("projects")
-          .select("id, location, scheduled_at, install_date, status, assigned_rep_id, total_amount, gross_profit, cogs, labor_cost, commission")
-          .order("scheduled_at", { ascending: false })
-          .limit(12),
-        supabase.from("business_settings").select("business_name").limit(1).maybeSingle(),
+          .from("appointments")
+          .select("sale_amount, sold, scheduled_at")
+          .gte("scheduled_at", monthStart)
+          .order("scheduled_at", { ascending: true }),
+        user && effectiveMode === "owner" ? loadOwnerWidgets(user.id) : Promise.resolve([]),
       ]);
 
       if (!isMounted) return;
 
-      const revenuePrevRows = await supabase
-        .from("appointments")
-        .select("sale_amount, sold, scheduled_at, date, assigned_to, rep_user_id, location")
-        .gte("scheduled_at", previousMonthStart)
-        .lt("scheduled_at", previousMonthEnd);
+      const todayAppointments =
+        ((todayAppointmentsResponse.data as Array<Record<string, unknown>> | null) ?? []).map((row) => {
+          const customer =
+            row.customers && !Array.isArray(row.customers)
+              ? (row.customers as Record<string, unknown>)
+              : null;
+          const rep =
+            row.app_users && !Array.isArray(row.app_users)
+              ? (row.app_users as Record<string, unknown>)
+              : null;
+          const scheduledAt = String(row.scheduled_at ?? "");
+          return {
+            id: String(row.id ?? ""),
+            slot:
+              String(row.slot ?? "") ||
+              new Date(scheduledAt).toLocaleTimeString("en-US", {
+                hour: "numeric",
+                minute: "2-digit",
+              }),
+            customerName: customerName(customer),
+            repName: repName(rep),
+            status: String(row.status ?? "scheduled"),
+          } satisfies AppointmentSummary;
+        });
 
-      const prevAppointmentRows =
-        (revenuePrevRows.data as Array<{
-          sale_amount?: number | null;
-          sold?: boolean | null;
-          assigned_to?: string | null;
-          rep_user_id?: string | null;
-          location?: string | null;
-        }> | null) ?? [];
-
-      const filteredPrevRevenue = prevAppointmentRows
-        .filter((row) => {
-          if (!row.sold) return false;
-          if (!scopedSalesUserId) return true;
-          return row.assigned_to === scopedSalesUserId || row.rep_user_id === scopedSalesUserId;
-        })
-        .reduce((sum, row) => sum + safeNumber(row.sale_amount), 0);
-
-      const locationRevenueCurrent = await supabase
-        .from("appointments")
-        .select("sale_amount, sold, location, scheduled_at")
-        .gte("scheduled_at", currentMonthStart);
-
-      const locationRows =
-        (locationRevenueCurrent.data as Array<{ sale_amount?: number | null; sold?: boolean | null; location?: string | null }> | null) ?? [];
-
-      const ellsworthRevenue = locationRows
-        .filter((row) => row.sold && row.location === "Ellsworth")
-        .reduce((sum, row) => sum + safeNumber(row.sale_amount), 0);
-      const lindsayRevenue = locationRows
-        .filter((row) => row.sold && row.location === "Lindsay")
-        .reduce((sum, row) => sum + safeNumber(row.sale_amount), 0);
-
-      setGoal({
-        actual: revenueGoal.actual,
-        target: revenueGoal.target,
-        percentage: revenueGoal.percentage,
-        ellsworth: ellsworthRevenue,
-        lindsay: lindsayRevenue,
-      });
-
-      setPipelineValue(pipeline);
-      setFollowUpNeeded(
-        (((quotesResponse.data as Array<Record<string, unknown>> | null) ?? []).filter((quote) => {
-          const createdAt = String(quote.created_at ?? "");
-          const status = String(quote.status ?? "pending");
-          return status === "pending" && !withinLastDays(createdAt, 7);
-        })).length,
-      );
-      setGrossProfitMtd(grossProfit);
-      setAvgGrossMargin(averageMargin);
-      setMarketingMetrics(leadsMetricSet);
-      setInstallerStats({
-        completed: jobsStats.completed,
-        averageHours: jobsStats.averageHours,
-        laborHours: jobsStats.laborMinutes / 60,
-      });
-
-      setRecentSignOffs(
-        (((signOffsResponse.data as Array<{ id: string; signed_at?: string | null; customer_name?: string | null; installer_id?: string | null }> | null) ?? [])
-          .filter((item) => (effectiveMode === "installer" ? item.installer_id === user?.id : true))
-          .slice(0, 5)
-          .map((item) => ({
-            id: item.id,
-            customerName: item.customer_name ?? "Customer",
-            signedAt: item.signed_at ?? new Date().toISOString(),
-          }))),
-      );
-
-      const quotesList = (((quotesResponse.data as Array<Record<string, unknown>> | null) ?? []).map((quote) => {
-        const customer =
-          quote.customers && !Array.isArray(quote.customers)
-            ? (quote.customers as Record<string, unknown>)
-            : null;
-        return {
-          id: String(quote.id ?? ""),
-          customerName: customerName(customer),
-          status: String(quote.status ?? "pending"),
-          total: safeNumber(quote.total),
-          createdAt: String(quote.created_at ?? new Date().toISOString()),
-        } satisfies QuoteSummary;
-      }));
-      setQuotes(quotesList.slice(0, 8));
-
-      const appointmentList = (((appointmentsResponse.data as Array<Record<string, unknown>> | null) ?? []).map((appointment) => {
-        const customer =
-          appointment.customers && !Array.isArray(appointment.customers)
-            ? (appointment.customers as Record<string, unknown>)
-            : null;
-        const rep =
-          appointment.app_users && !Array.isArray(appointment.app_users)
-            ? (appointment.app_users as Record<string, unknown>)
-            : null;
-        return {
-          id: String(appointment.id ?? ""),
-          slot: String(appointment.slot ?? ""),
-          customerName: customerName(customer),
-          address:
-            [
-              customer?.address,
-              customer?.city,
-              customer?.state,
-              customer?.zip,
-            ]
-              .filter((value) => typeof value === "string" && value)
-              .join(", ") || "Address unavailable",
-          repName:
-            [rep?.first_name, rep?.last_name]
-              .filter((value) => typeof value === "string" && value)
-              .join(" ") || "Sales rep",
-          status: String(appointment.status ?? "scheduled"),
-          sold: Boolean(appointment.sold),
-          saleAmount: safeNumber(appointment.sale_amount),
-        } satisfies AppointmentSummary;
-      }));
-
-      setAppointments(
-        appointmentList.filter((appointment, index) => {
-          if (effectiveMode === "owner" || effectiveMode === "sales_manager" || effectiveMode === "marketing_manager") {
-            return true;
-          }
-          if (effectiveMode === "sales_rep") {
-            const raw = (appointmentsResponse.data as Array<Record<string, unknown>> | null)?.[index];
-            return (
-              String(raw?.assigned_to ?? "") === user?.id ||
-              String(raw?.rep_user_id ?? "") === user?.id
-            );
-          }
-          return index < 3;
-        }),
-      );
-
-      const managerTeamUsers =
-        effectiveMode === "sales_manager" && user?.location
-          ? users.filter((person) => person.location === user.location)
-          : users;
-
-      const teamKpis = await getTeamKPIs();
-      const performanceRows = teamKpis
-        .filter((person) =>
-          effectiveMode === "sales_manager" && user?.location
-            ? person.user.location === user.location
-            : true,
-        )
-        .map((person) => ({
-          id: person.user.id,
-          name: person.user.name,
-          initials: initials(person.user.name),
-          closeRatio: person.closeRatio,
-          averageSale: person.averageSale,
-          nsli: person.nsli,
-          totalSold: person.totalSold,
-        } satisfies TeamPerformanceRow));
-      setTeamPerformance(performanceRows);
-
-      setTeamStatus(
-        users
-          .filter((person) => person.roleName === "Installer")
-          .map((person, index) => ({
-            id: person.id,
-            name: person.fullName,
-            status: index % 2 === 0 ? "On install" : "Available",
-            detail: index % 2 === 0 ? "Assigned to field job" : "Waiting for next dispatch",
-          })),
-      );
-
-      const projectRows =
-        (projectsResponse.data as Array<{ location?: string | null; total_amount?: number | null; gross_profit?: number | null; cogs?: number | null; labor_cost?: number | null; commission?: number | null; status?: string | null }> | null) ?? [];
-      setLocationComparison([
-        {
-          name: "Ellsworth",
-          revenue: projectRows
-            .filter((row) => row.location === "Ellsworth")
-            .reduce((sum, row) => sum + safeNumber(row.total_amount), 0),
-        },
-        {
-          name: "Lindsay",
-          revenue: projectRows
-            .filter((row) => row.location === "Lindsay")
-            .reduce((sum, row) => sum + safeNumber(row.total_amount), 0),
-        },
-      ]);
-
-      const weeklyBuckets = [1, 2, 3, 4].map((week) => ({
+      const weeklyBuckets = [1, 2, 3, 4, 5].map((week) => ({
         label: `Week ${week}`,
         value: 0,
       }));
-      appointmentList.forEach((appointment, index) => {
-        const raw = (appointmentsResponse.data as Array<Record<string, unknown>> | null)?.[index];
-        const dateValue = String(raw?.scheduled_at ?? raw?.date ?? "");
-        const week = weekNumberInMonth(dateValue);
-        weeklyBuckets[week - 1].value += appointment.sold ? appointment.saleAmount : 0;
+      const salesRows =
+        (salesByWeekResponse.data as Array<{ sale_amount?: number | null; sold?: boolean | null; scheduled_at?: string | null }> | null) ?? [];
+      salesRows.forEach((row) => {
+        if (!row.sold) return;
+        const date = new Date(String(row.scheduled_at ?? ""));
+        const week = Math.min(5, Math.floor((date.getDate() - 1) / 7) + 1);
+        weeklyBuckets[week - 1].value += safeNumber(row.sale_amount);
       });
-      setSalesByWeek(weeklyBuckets);
-      setLeadSources(leadsBreakdown);
 
-      if (user && pins.length > 0) {
-        const pinned = await Promise.all(
-          pins.map(async (pin) => {
-            const definition = kpiDefinitions.find((item) => item.key === pin.kpi_key);
-            if (!definition) {
-              return null;
-            }
-            const [value, trend] = await Promise.all([
-              getKpiValue(pin.kpi_key, user.id),
-              getKpiTrend(pin.kpi_key, user.id),
-            ]);
-            return {
-              id: pin.id,
-              key: pin.kpi_key,
-              definition,
-              value: safeNumber(value.value),
-              trend: safeNumber(trend),
-            } satisfies PinnedCard;
-          }),
-        );
-        setPinnedCards(pinned.filter(Boolean) as PinnedCard[]);
-      } else {
-        setPinnedCards([]);
-      }
+      const teamRows = teamKpis.map((row) => ({
+        id: row.user.id,
+        name: row.user.name,
+        initials: initials(row.user.name),
+        closeRatio: row.closeRatio,
+        averageSale: row.averageSale,
+        nsli: row.nsli,
+        totalSold: row.totalSold,
+        location: row.user.location,
+      }));
 
-      const monthlyGoalTarget =
-        effectiveMode === "sales_rep"
-          ? Math.max(revenueGoal.target * 0.25, 70000)
-          : revenueGoal.target;
-      setRepGoalAmount(monthlyGoalTarget);
+      const pinned = user
+        ? await Promise.all(
+            pins.map(async (pin) => {
+              const definition = kpiDefinitions.find((item) => item.key === pin.kpi_key);
+              if (!definition) return null;
+              const [value, trend] = await Promise.all([
+                getKpiValue(pin.kpi_key, user.id),
+                getKpiTrend(pin.kpi_key, user.id),
+              ]);
+              return {
+                id: pin.id,
+                key: pin.kpi_key,
+                definition,
+                value: safeNumber(value.value),
+                trend: safeNumber(trend),
+              } satisfies PinnedCard;
+            }),
+          )
+        : [];
 
-      const quotesChangeBase = quoteStats.prevCount || 1;
-      const revenueChange = filteredPrevRevenue > 0 ? ((revenueMtd - filteredPrevRevenue) / filteredPrevRevenue) * 100 : 0;
-      const quoteChange = ((quoteStats.monthCount - quoteStats.prevCount) / quotesChangeBase) * 100;
+      setPinnedCards((pinned.filter(Boolean) as PinnedCard[]) ?? []);
+      setOwnerWidgets(widgets);
+      setData({
+        revenueGoal,
+        revenueMtd,
+        revenueTrend: safeNumber(revenueTrend),
+        closeRatio,
+        averageSale,
+        averageSaleTrend: safeNumber(averageSaleTrend),
+        nsli,
+        nsliTrend: safeNumber(nsliTrend),
+        todaysAppointments: todayAppointments,
+        teamPerformance:
+          effectiveMode === "sales_manager" && user?.location
+            ? teamRows.filter((row) => row.location === user.location)
+            : teamRows,
+        salesByWeek: weeklyBuckets,
+        leadSources: leadSources.slice(0, 5).map((item) => ({
+          source: item.source,
+          leads: item.leads,
+          revenue: item.revenue,
+        })),
+        marketing: {
+          leads: marketing.leads,
+          bookingRate: marketing.bookingRate,
+          demoRate: marketing.demoRate,
+          leadToClose: marketing.leadToClose,
+        },
+      });
 
-      if (effectiveMode === "marketing_manager") {
-        setMetrics([
-          {
-            label: "Total leads this month",
-            value: String(leadsMetricSet.leads),
-            detail: `${leadsMetricSet.previousLeads > 0 ? (((leadsMetricSet.leads - leadsMetricSet.previousLeads) / leadsMetricSet.previousLeads) * 100).toFixed(1) : "0.0"}% vs last month`,
-          },
-          {
-            label: "Booking rate",
-            value: formatKpiValue(leadsMetricSet.bookingRate, "percent"),
-            detail: "Leads that became appointments",
-            tone: leadsMetricSet.bookingRate >= 0.5 ? "green" : leadsMetricSet.bookingRate >= 0.4 ? "amber" : "red",
-          },
-          {
-            label: "Demo rate",
-            value: formatKpiValue(leadsMetricSet.demoRate, "percent"),
-            detail: "Appointments run vs booked",
-            tone: leadsMetricSet.demoRate >= 0.7 ? "green" : leadsMetricSet.demoRate >= 0.6 ? "amber" : "red",
-          },
-          {
-            label: "Lead to close rate",
-            value: formatKpiValue(leadsMetricSet.leadToClose, "percent"),
-            detail: "Sales vs total leads",
-            tone: leadsMetricSet.leadToClose >= 0.3 ? "green" : leadsMetricSet.leadToClose >= 0.2 ? "amber" : "red",
-          },
-        ]);
-      } else if (effectiveMode === "installer") {
-        setMetrics([
-          {
-            label: "Jobs completed this month",
-            value: String(jobsStats.completed),
-            detail: "Completed installations this month",
-          },
-          {
-            label: "Average job time",
-            value: `${jobsStats.averageHours.toFixed(1)}h`,
-            detail: "Average install duration",
-          },
-          {
-            label: "Labor hours",
-            value: `${(jobsStats.laborMinutes / 60).toFixed(1)}h`,
-            detail: "Tracked time on jobs",
-          },
-          {
-            label: "Recent sign-offs",
-            value: String(
-              (((signOffsResponse.data as Array<{ installer_id?: string | null }> | null) ?? []).filter(
-                (item) => item.installer_id === user?.id,
-              )).length,
-            ),
-            detail: "Customer sign-offs completed",
-          },
-        ]);
-      } else if (effectiveMode === "sales_rep") {
-        setMetrics([
-          {
-            label: "My close ratio",
-            value: formatKpiValue(closeRatio.ratio, "percent"),
-            detail: `${closeRatio.sold} of ${closeRatio.total} leads closed`,
-            tone: closeRatio.ratio >= 0.48 ? "green" : closeRatio.ratio >= 0.38 ? "amber" : "red",
-          },
-          {
-            label: "My average sale",
-            value: formatKpiValue(averageSale.average, "currency"),
-            detail: "Target $7,000 average sale",
-            tone: averageSale.average >= 7000 ? "green" : averageSale.average >= 6300 ? "amber" : "red",
-          },
-          {
-            label: "My NSLI",
-            value: formatKpiValue(nsli.nsli, "currency"),
-            detail: "Total sold ÷ leads issued",
-          },
-          {
-            label: "My total sold MTD",
-            value: formatKpiValue(revenueMtd, "currency"),
-            detail: `${formatKpiValue(Math.max(monthlyGoalTarget - revenueMtd, 0), "currency")} to goal`,
-            tone: revenueMtd >= monthlyGoalTarget ? "green" : revenueMtd >= monthlyGoalTarget * 0.9 ? "amber" : "red",
-          },
-        ]);
-      } else if (effectiveMode === "sales_manager") {
-        setMetrics([
-          {
-            label: "Revenue MTD",
-            value: formatKpiValue(revenueMtd, "currency"),
-            detail: `${revenueChange.toFixed(1)}% vs last month`,
-            tone: revenueChange >= 0 ? "green" : revenueChange >= -10 ? "amber" : "red",
-          },
-          {
-            label: "Quotes this month",
-            value: String(quoteStats.monthCount),
-            detail: `${quoteChange.toFixed(1)}% vs last month`,
-          },
-          {
-            label: "Pipeline value",
-            value: formatKpiValue(pipeline, "currency"),
-            detail: "Open quote value × current close rate",
-          },
-          {
-            label: "Follow-up needed",
-            value: String(followUpNeeded),
-            detail: "Quotes older than 7 days with no activity",
-            tone: followUpNeeded > 0 ? "amber" : "default",
-          },
-        ]);
-      } else {
-        setMetrics([
-          {
-            label: "Revenue MTD",
-            value: formatKpiValue(revenueMtd, "currency"),
-            detail: "Current month closed revenue",
-            tone: revenueGoal.percentage >= 1 ? "green" : revenueGoal.percentage >= 0.9 ? "amber" : "red",
-          },
-          {
-            label: "Close ratio",
-            value: formatKpiValue(closeRatio.ratio, "percent"),
-            detail: `${closeRatio.sold} of ${closeRatio.total} appointments closed`,
-            tone: closeRatio.ratio >= 0.48 ? "green" : closeRatio.ratio >= 0.432 ? "amber" : "red",
-          },
-          {
-            label: "Average sale",
-            value: formatKpiValue(averageSale.average, "currency"),
-            detail: "Target $7,000 average sale",
-            tone: averageSale.average >= 7000 ? "green" : averageSale.average >= 6300 ? "amber" : "red",
-          },
-          {
-            label: "NSLI",
-            value: formatKpiValue(nsli.nsli, "currency"),
-            detail: "Total sold divided by non-cancelled leads",
-            tone: nsli.nsli >= 3000 ? "green" : nsli.nsli >= 2700 ? "amber" : "red",
-          },
-        ]);
-      }
-
-      void businessSettingsResponse;
       setLoading(false);
     }
 
-    void load();
+    void loadDashboard();
 
     return () => {
       isMounted = false;
     };
   }, []);
 
-  const teamRowsForManager = useMemo(() => {
-    if (!currentUser || mode !== "sales_manager") return teamPerformance;
-    return teamPerformance.filter((row) => {
-      const matchingUser = activeUsers.find((person) => person.id === row.id);
-      return matchingUser?.location === currentUser.location;
-    });
-  }, [activeUsers, currentUser, mode, teamPerformance]);
-
-  async function unpin(id: string) {
+  async function unpinKpi(id: string) {
     await supabase.from("user_dashboard_pins").delete().eq("id", id);
     setPinnedCards((current) => current.filter((card) => card.id !== id));
   }
 
-  const ownerManagerRows = mode === "sales_manager" ? teamRowsForManager : teamPerformance;
+  async function updateOwnerWidgets(nextWidgets: WidgetLayout[]) {
+    if (!currentUser) return;
+    const normalized = nextWidgets.map((widget, index) => ({
+      ...widget,
+      position: index,
+      col_span: widgetSizeToSpan(widget.size),
+    }));
+    setOwnerWidgets(normalized);
+    await saveOwnerWidgets(currentUser.id, normalized);
+  }
+
+  async function cycleWidgetSize(widgetKey: WidgetKey) {
+    const next: WidgetLayout[] = ownerWidgets.map((widget) => {
+      if (widget.widgetKey !== widgetKey) return widget;
+      const nextSize: WidgetSize =
+        widget.size === "small"
+          ? "medium"
+          : widget.size === "medium"
+            ? "large"
+            : "small";
+      return {
+        ...widget,
+        size: nextSize,
+        col_span: widgetSizeToSpan(nextSize),
+      };
+    });
+    await updateOwnerWidgets(next);
+  }
+
+  async function removeWidget(widgetKey: WidgetKey) {
+    if (!currentUser) return;
+    await supabase
+      .from("user_dashboard_pins")
+      .delete()
+      .eq("user_id", currentUser.id)
+      .eq("kpi_key", widgetKeyToDb(widgetKey));
+    setOwnerWidgets((current) => current.filter((widget) => widget.widgetKey !== widgetKey));
+  }
+
+  async function reorderWidgets(fromKey: WidgetKey, toKey: WidgetKey) {
+    if (fromKey === toKey) return;
+    const current = [...ownerWidgets];
+    const fromIndex = current.findIndex((widget) => widget.widgetKey === fromKey);
+    const toIndex = current.findIndex((widget) => widget.widgetKey === toKey);
+    if (fromIndex < 0 || toIndex < 0) return;
+    const [moved] = current.splice(fromIndex, 1);
+    current.splice(toIndex, 0, moved);
+    await updateOwnerWidgets(current);
+  }
+
+  function renderOwnerWidget(widget: WidgetLayout) {
+    switch (widget.widgetKey) {
+      case "revenue_goal_progress":
+        return (
+          <WidgetShell
+            key={widget.widgetKey}
+            title={`${monthLabel()} Revenue Goal: ${formatKpiValue(data.revenueGoal.target, "currency")}`}
+            size={widget.size}
+            onResize={() => void cycleWidgetSize(widget.widgetKey)}
+            onRemove={() => void removeWidget(widget.widgetKey)}
+            onDragStart={() => setDraggedWidget(widget.widgetKey)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={() => {
+              if (draggedWidget) void reorderWidgets(draggedWidget, widget.widgetKey);
+              setDraggedWidget(null);
+            }}
+          >
+            <div className="flex h-full flex-col">
+              <div className="h-5 rounded-full bg-stone-100">
+                <div
+                  className="h-5 rounded-full transition-all"
+                  style={{
+                    width: `${Math.min(data.revenueGoal.percentage * 100, 100)}%`,
+                    backgroundColor: progressColor(data.revenueGoal.percentage),
+                  }}
+                />
+              </div>
+              <div className="mt-5 grid gap-4 md:grid-cols-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-stone-400">Actual</p>
+                  <p className="mt-2 text-3xl font-semibold text-stone-950">
+                    {formatKpiValue(data.revenueGoal.actual, "currency")}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-stone-400">Goal</p>
+                  <p className="mt-2 text-3xl font-semibold text-stone-950">
+                    {formatKpiValue(data.revenueGoal.target, "currency")}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-stone-400">Progress</p>
+                  <p className={`mt-2 text-3xl font-semibold ${metricTone(data.revenueGoal.percentage, 1)}`}>
+                    {(data.revenueGoal.percentage * 100).toFixed(1)}%
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-stone-400">Remaining</p>
+                  <p className="mt-2 text-3xl font-semibold text-stone-950">
+                    {formatKpiValue(Math.max(data.revenueGoal.target - data.revenueGoal.actual, 0), "currency")}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </WidgetShell>
+        );
+
+      case "revenue_mtd":
+        return (
+          <WidgetShell
+            key={widget.widgetKey}
+            title="Revenue MTD"
+            size={widget.size}
+            onResize={() => void cycleWidgetSize(widget.widgetKey)}
+            onRemove={() => void removeWidget(widget.widgetKey)}
+            onDragStart={() => setDraggedWidget(widget.widgetKey)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={() => {
+              if (draggedWidget) void reorderWidgets(draggedWidget, widget.widgetKey);
+              setDraggedWidget(null);
+            }}
+          >
+            <p className="text-4xl font-semibold tracking-tight text-stone-950">
+              {formatKpiValue(data.revenueMtd, "currency")}
+            </p>
+            <p className={`mt-4 text-sm font-medium ${data.revenueTrend >= 0 ? "text-[#2DA44E]" : "text-[#A32D2D]"}`}>
+              {data.revenueTrend >= 0 ? "Above" : "Below"} last month by{" "}
+              {formatKpiValue(Math.abs(data.revenueTrend), "currency")}
+            </p>
+          </WidgetShell>
+        );
+
+      case "close_ratio":
+        return (
+          <WidgetShell
+            key={widget.widgetKey}
+            title="Close ratio"
+            size={widget.size}
+            onResize={() => void cycleWidgetSize(widget.widgetKey)}
+            onRemove={() => void removeWidget(widget.widgetKey)}
+            onDragStart={() => setDraggedWidget(widget.widgetKey)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={() => {
+              if (draggedWidget) void reorderWidgets(draggedWidget, widget.widgetKey);
+              setDraggedWidget(null);
+            }}
+          >
+            <p className={`text-4xl font-semibold tracking-tight ${metricTone(data.closeRatio.ratio, 0.48)}`}>
+              {formatKpiValue(data.closeRatio.ratio, "percent")}
+            </p>
+            <p className="mt-4 text-sm text-stone-500">
+              {data.closeRatio.sold} of {data.closeRatio.total} leads closed
+            </p>
+          </WidgetShell>
+        );
+
+      case "average_sale":
+        return (
+          <WidgetShell
+            key={widget.widgetKey}
+            title="Average sale"
+            size={widget.size}
+            onResize={() => void cycleWidgetSize(widget.widgetKey)}
+            onRemove={() => void removeWidget(widget.widgetKey)}
+            onDragStart={() => setDraggedWidget(widget.widgetKey)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={() => {
+              if (draggedWidget) void reorderWidgets(draggedWidget, widget.widgetKey);
+              setDraggedWidget(null);
+            }}
+          >
+            <p className={`text-4xl font-semibold tracking-tight ${metricTone(data.averageSale.average, 7000)}`}>
+              {formatKpiValue(data.averageSale.average, "currency")}
+            </p>
+            <p className={`mt-4 text-sm ${data.averageSaleTrend >= 0 ? "text-[#2DA44E]" : "text-[#A32D2D]"}`}>
+              {data.averageSale.count} sold appointments this month
+            </p>
+          </WidgetShell>
+        );
+
+      case "nsli":
+        return (
+          <WidgetShell
+            key={widget.widgetKey}
+            title="NSLI"
+            size={widget.size}
+            onResize={() => void cycleWidgetSize(widget.widgetKey)}
+            onRemove={() => void removeWidget(widget.widgetKey)}
+            onDragStart={() => setDraggedWidget(widget.widgetKey)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={() => {
+              if (draggedWidget) void reorderWidgets(draggedWidget, widget.widgetKey);
+              setDraggedWidget(null);
+            }}
+          >
+            <p className="text-4xl font-semibold tracking-tight text-stone-950">
+              {formatKpiValue(data.nsli.nsli, "currency")}
+            </p>
+            <p className={`mt-4 text-sm ${data.nsliTrend >= 0 ? "text-[#2DA44E]" : "text-[#A32D2D]"}`}>
+              {data.nsli.leadsIssued} non-cancelled leads this month
+            </p>
+          </WidgetShell>
+        );
+
+      case "todays_appointments":
+        return (
+          <WidgetShell
+            key={widget.widgetKey}
+            title="Today's appointments"
+            size={widget.size}
+            onResize={() => void cycleWidgetSize(widget.widgetKey)}
+            onRemove={() => void removeWidget(widget.widgetKey)}
+            onDragStart={() => setDraggedWidget(widget.widgetKey)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={() => {
+              if (draggedWidget) void reorderWidgets(draggedWidget, widget.widgetKey);
+              setDraggedWidget(null);
+            }}
+          >
+            <div className="space-y-3">
+              {data.todaysAppointments.length > 0 ? (
+                data.todaysAppointments.map((appointment) => (
+                  <div key={appointment.id} className="rounded-2xl bg-stone-50 px-4 py-4">
+                    <p className="font-medium text-stone-950">
+                      {appointment.slot} · {appointment.customerName}
+                    </p>
+                    <p className="mt-1 text-sm text-stone-500">
+                      {appointment.repName} · {appointment.status}
+                    </p>
+                  </div>
+                ))
+              ) : (
+                <EmptyState>No appointments today.</EmptyState>
+              )}
+            </div>
+          </WidgetShell>
+        );
+
+      case "team_performance":
+        return (
+          <WidgetShell
+            key={widget.widgetKey}
+            title="Team performance"
+            size={widget.size}
+            onResize={() => void cycleWidgetSize(widget.widgetKey)}
+            onRemove={() => void removeWidget(widget.widgetKey)}
+            onDragStart={() => setDraggedWidget(widget.widgetKey)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={() => {
+              if (draggedWidget) void reorderWidgets(draggedWidget, widget.widgetKey);
+              setDraggedWidget(null);
+            }}
+          >
+            <div className="space-y-3">
+              {data.teamPerformance.map((person) => (
+                <div key={person.id} className="grid grid-cols-[44px_1fr] gap-3 rounded-2xl bg-stone-50 px-4 py-4">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-sm font-semibold text-stone-600">
+                    {person.initials}
+                  </div>
+                  <div>
+                    <p className="font-medium text-stone-950">{person.name}</p>
+                    <div className="mt-2 grid gap-2 text-sm md:grid-cols-4">
+                      <span className={metricTone(person.closeRatio, 0.48)}>
+                        Close {formatKpiValue(person.closeRatio, "percent")}
+                      </span>
+                      <span className={metricTone(person.averageSale, 7000)}>
+                        Avg {formatKpiValue(person.averageSale, "currency")}
+                      </span>
+                      <span className="text-stone-600">NSLI {formatKpiValue(person.nsli, "currency")}</span>
+                      <span className="text-stone-600">Sold {formatKpiValue(person.totalSold, "currency")}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </WidgetShell>
+        );
+
+      case "sales_by_week":
+        return (
+          <WidgetShell
+            key={widget.widgetKey}
+            title="Sales by week"
+            size={widget.size}
+            onResize={() => void cycleWidgetSize(widget.widgetKey)}
+            onRemove={() => void removeWidget(widget.widgetKey)}
+            onDragStart={() => setDraggedWidget(widget.widgetKey)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={() => {
+              if (draggedWidget) void reorderWidgets(draggedWidget, widget.widgetKey);
+              setDraggedWidget(null);
+            }}
+          >
+            <div className="h-full min-h-[260px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={data.salesByWeek}>
+                  <XAxis dataKey="label" tick={{ fill: "#ffffff" }} axisLine={false} tickLine={false} />
+                  <YAxis hide />
+                  <Tooltip formatter={(value) => formatKpiValue(safeNumber(value), "currency")} />
+                  <Bar dataKey="value" fill="#FF4900" radius={[10, 10, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </WidgetShell>
+        );
+    }
+  }
+
+  function renderOwnerDashboard() {
+    const widgets = ownerWidgets.length > 0 ? ownerWidgets : OWNER_DEFAULT_WIDGETS.map((widget) => ({
+      kpi_key: widgetKeyToDb(widget.key),
+      widgetKey: widget.key,
+      size: widget.size,
+      col_span: widgetSizeToSpan(widget.size),
+      position: widget.position,
+    }));
+
+    return (
+      <div className="grid auto-rows-[220px] grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
+        {widgets
+          .sort((a, b) => a.position - b.position)
+          .map((widget) => renderOwnerWidget(widget))}
+      </div>
+    );
+  }
+
+  function renderFallbackDashboard() {
+    return (
+      <div className="grid gap-5 xl:grid-cols-4">
+        <div className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm">
+          <p className="text-sm text-stone-500">Revenue MTD</p>
+          <p className="mt-4 text-3xl font-semibold tracking-tight text-stone-950">
+            {formatKpiValue(data.revenueMtd, "currency")}
+          </p>
+        </div>
+        <div className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm">
+          <p className="text-sm text-stone-500">Close ratio</p>
+          <p className={`mt-4 text-3xl font-semibold tracking-tight ${metricTone(data.closeRatio.ratio, 0.48)}`}>
+            {formatKpiValue(data.closeRatio.ratio, "percent")}
+          </p>
+        </div>
+        <div className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm">
+          <p className="text-sm text-stone-500">Average sale</p>
+          <p className={`mt-4 text-3xl font-semibold tracking-tight ${metricTone(data.averageSale.average, 7000)}`}>
+            {formatKpiValue(data.averageSale.average, "currency")}
+          </p>
+        </div>
+        <div className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm">
+          <p className="text-sm text-stone-500">NSLI</p>
+          <p className="mt-4 text-3xl font-semibold tracking-tight text-stone-950">
+            {formatKpiValue(data.nsli.nsli, "currency")}
+          </p>
+        </div>
+
+        <div className="rounded-3xl border border-stone-200 bg-white p-6 shadow-sm md:col-span-2 xl:col-span-2">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-lg font-semibold tracking-tight text-stone-950">Today's appointments</h2>
+            <Link href="/calendar" className="text-sm font-medium text-primary">
+              View all
+            </Link>
+          </div>
+          <div className="mt-5 space-y-3">
+            {data.todaysAppointments.length > 0 ? (
+              data.todaysAppointments.map((appointment) => (
+                <div key={appointment.id} className="rounded-2xl bg-stone-50 px-4 py-4">
+                  <p className="font-medium text-stone-950">
+                    {appointment.slot} · {appointment.customerName}
+                  </p>
+                  <p className="mt-1 text-sm text-stone-500">
+                    {appointment.repName} · {appointment.status}
+                  </p>
+                </div>
+              ))
+            ) : (
+              <EmptyState>No appointments today.</EmptyState>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-stone-200 bg-white p-6 shadow-sm md:col-span-2 xl:col-span-2">
+          <h2 className="text-lg font-semibold tracking-tight text-stone-950">
+            {mode === "marketing_manager" ? "Lead sources" : "Team performance"}
+          </h2>
+          <div className="mt-5">
+            {mode === "marketing_manager" ? (
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={data.leadSources} dataKey="leads" nameKey="source" innerRadius={60} outerRadius={90}>
+                      {data.leadSources.map((entry, index) => (
+                        <Cell key={entry.source} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {data.teamPerformance.slice(0, 5).map((person) => (
+                  <div key={person.id} className="rounded-2xl bg-stone-50 px-4 py-4">
+                    <p className="font-medium text-stone-950">{person.name}</p>
+                    <p className="mt-1 text-sm text-stone-500">
+                      Close {formatKpiValue(person.closeRatio, "percent")} · Avg {formatKpiValue(person.averageSale, "currency")}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <main className="flex min-h-screen bg-stone-100">
@@ -838,507 +1007,19 @@ export default function DashboardPage() {
         <Topbar title="Dashboard" actionLabel="New quote" actionHref="/quotes/new" />
 
         <div className="flex-1 space-y-8 p-8">
-          <PinnedKpisRow cards={pinnedCards} onUnpin={unpin} />
+          <PinnedKpisRow cards={pinnedCards} onUnpin={unpinKpi} />
 
           {loading ? (
             <div className="grid gap-5 xl:grid-cols-4">
               {Array.from({ length: 4 }).map((_, index) => (
-                <div
-                  key={index}
-                  className="h-36 animate-pulse rounded-2xl border border-stone-200 bg-white"
-                />
+                <div key={index} className="h-36 animate-pulse rounded-2xl border border-stone-200 bg-white" />
               ))}
             </div>
+          ) : mode === "owner" ? (
+            renderOwnerDashboard()
           ) : (
-            <MetricGrid metrics={metrics} />
+            renderFallbackDashboard()
           )}
-
-          {mode === "owner" ? (
-            <>
-              <SummaryCard title={`${monthLabel()} Revenue Goal: ${formatKpiValue(goal.target, "currency")}`}>
-                <div className="h-4 rounded-full bg-stone-100">
-                  <div
-                    className="h-4 rounded-full"
-                    style={{
-                      width: `${Math.min(goal.percentage * 100, 100)}%`,
-                      backgroundColor: progressColor(goal.percentage),
-                    }}
-                  />
-                </div>
-                <p className="mt-4 text-sm text-stone-600">
-                  {formatKpiValue(goal.actual, "currency")} of {formatKpiValue(goal.target, "currency")} ·{" "}
-                  {(goal.percentage * 100).toFixed(1)}% · {formatKpiValue(Math.max(goal.target - goal.actual, 0), "currency")} to go
-                </p>
-                <div className="mt-5 grid gap-4 md:grid-cols-2">
-                  {[
-                    { label: "Ellsworth", value: goal.ellsworth, color: "#FF4900" },
-                    { label: "Lindsay", value: goal.lindsay, color: "#2DA44E" },
-                  ].map((item) => (
-                    <div key={item.label}>
-                      <div className="flex items-center justify-between text-sm text-stone-500">
-                        <span>{item.label}</span>
-                        <span>{formatKpiValue(item.value, "currency")}</span>
-                      </div>
-                      <div className="mt-2 h-3 rounded-full bg-stone-100">
-                        <div
-                          className="h-3 rounded-full"
-                          style={{
-                            width: `${goal.actual > 0 ? (item.value / goal.actual) * 100 : 0}%`,
-                            backgroundColor: item.color,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </SummaryCard>
-
-              <div className="grid gap-5 xl:grid-cols-[1.2fr_0.9fr]">
-                <div className="space-y-5">
-                  <SummaryCard
-                    title="Today's appointments"
-                    action={<Link href="/calendar" className="text-sm font-medium text-primary">View all</Link>}
-                  >
-                    <div className="space-y-3">
-                      {appointments.length > 0 ? (
-                        appointments.map((appointment) => (
-                          <div key={appointment.id} className="rounded-2xl bg-stone-50 px-4 py-4">
-                            <p className="font-medium text-stone-950">
-                              {appointment.slot} · {appointment.customerName}
-                            </p>
-                            <p className="mt-1 text-sm text-stone-500">{appointment.address}</p>
-                            <p className="mt-1 text-xs text-stone-400">
-                              {appointment.repName} · {appointment.status}
-                            </p>
-                          </div>
-                        ))
-                      ) : (
-                        <EmptyState>No appointments scheduled for today.</EmptyState>
-                      )}
-                    </div>
-                  </SummaryCard>
-
-                  <SummaryCard title="Recent quotes">
-                    <div className="space-y-3">
-                      {quotes.slice(0, 5).map((quote) => (
-                        <div key={quote.id} className="flex items-center justify-between rounded-2xl bg-stone-50 px-4 py-4">
-                          <div>
-                            <p className="font-medium text-stone-950">{quote.customerName}</p>
-                            <p className="mt-1 text-sm text-stone-500">{formatDate(quote.createdAt)}</p>
-                          </div>
-                          <div className="text-right">
-                            <Badge
-                              label={quote.status}
-                              tone={quote.status === "pending" ? "lead" : quote.status === "ordered" ? "active" : "customer"}
-                            />
-                            <p className="mt-2 text-sm font-medium text-stone-700">
-                              {formatKpiValue(quote.total, "currency")}
-                            </p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </SummaryCard>
-                </div>
-
-                <div className="space-y-5">
-                  <SummaryCard title="Team performance">
-                    <div className="space-y-3">
-                      {ownerManagerRows.map((person) => (
-                        <div key={person.id} className="grid grid-cols-[56px_1fr] gap-3 rounded-2xl bg-stone-50 px-4 py-4">
-                          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-sm font-semibold text-stone-600">
-                            {person.initials}
-                          </div>
-                          <div>
-                            <p className="font-medium text-stone-950">{person.name}</p>
-                            <div className="mt-2 grid gap-2 text-sm md:grid-cols-4">
-                              <span className={metricToneClass(person.closeRatio >= 0.48 ? "green" : person.closeRatio >= 0.38 ? "amber" : "red")}>
-                                Close {formatKpiValue(person.closeRatio, "percent")}
-                              </span>
-                              <span className={metricToneClass(person.averageSale >= 7000 ? "green" : person.averageSale >= 6300 ? "amber" : "red")}>
-                                Avg {formatKpiValue(person.averageSale, "currency")}
-                              </span>
-                              <span>NSLI {formatKpiValue(person.nsli, "currency")}</span>
-                              <span>Sold {formatKpiValue(person.totalSold, "currency")}</span>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </SummaryCard>
-
-                  <SummaryCard title="Team status">
-                    <div className="space-y-3">
-                      {teamStatus.map((installer) => (
-                        <div key={installer.id} className="rounded-2xl bg-stone-50 px-4 py-4">
-                          <p className="font-medium text-stone-950">{installer.name}</p>
-                          <p className="mt-1 text-sm text-stone-500">{installer.detail}</p>
-                          <p className="mt-2 text-xs font-medium text-primary">{installer.status}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </SummaryCard>
-                </div>
-              </div>
-
-              <div className="grid gap-5 xl:grid-cols-3">
-                <SummaryCard title="Sales by week">
-                  <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={salesByWeek}>
-                        <XAxis dataKey="label" />
-                        <YAxis hide />
-                        <Tooltip formatter={formatCurrencyTooltip} />
-                        <Bar dataKey="value" fill="#FF4900" radius={[8, 8, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </SummaryCard>
-
-                <SummaryCard title="Lead sources">
-                  <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie data={leadSources} dataKey="leads" nameKey="source" innerRadius={60} outerRadius={90}>
-                          {leadSources.map((entry, index) => (
-                            <Cell key={entry.source} fill={PIE_COLORS[index % PIE_COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                </SummaryCard>
-
-                <SummaryCard title="Location comparison">
-                  <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={locationComparison}>
-                        <XAxis dataKey="name" />
-                        <YAxis hide />
-                        <Tooltip formatter={formatCurrencyTooltip} />
-                        <Bar dataKey="revenue" radius={[8, 8, 0, 0]}>
-                          {locationComparison.map((entry) => (
-                            <Cell key={entry.name} fill={entry.name === "Ellsworth" ? "#FF4900" : "#2DA44E"} />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </SummaryCard>
-              </div>
-            </>
-          ) : null}
-
-          {mode === "sales_manager" ? (
-            <>
-              <div className="grid gap-5 xl:grid-cols-[1.2fr_0.9fr]">
-                <div className="space-y-5">
-                  <SummaryCard
-                    title="Today's appointments"
-                    action={<Link href="/calendar" className="text-sm font-medium text-primary">View all</Link>}
-                  >
-                    <div className="space-y-3">
-                      {appointments.length > 0 ? (
-                        appointments.map((appointment) => (
-                          <div key={appointment.id} className="rounded-2xl bg-stone-50 px-4 py-4">
-                            <p className="font-medium text-stone-950">
-                              {appointment.slot} · {appointment.customerName}
-                            </p>
-                            <p className="mt-1 text-sm text-stone-500">{appointment.address}</p>
-                            <p className="mt-1 text-xs text-stone-400">{appointment.repName}</p>
-                          </div>
-                        ))
-                      ) : (
-                        <EmptyState>No appointments scheduled for today.</EmptyState>
-                      )}
-                    </div>
-                  </SummaryCard>
-
-                  <SummaryCard title="Recent quotes">
-                    <div className="space-y-3">
-                      {quotes.slice(0, 5).map((quote) => (
-                        <div key={quote.id} className="rounded-2xl bg-stone-50 px-4 py-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <div>
-                              <p className="font-medium text-stone-950">{quote.customerName}</p>
-                              <p className="mt-1 text-sm text-stone-500">{formatDate(quote.createdAt)}</p>
-                            </div>
-                            <Badge label={quote.status} tone={quote.status === "pending" ? "lead" : "customer"} />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </SummaryCard>
-                </div>
-
-                <div className="space-y-5">
-                  <SummaryCard title="Team performance">
-                    <div className="space-y-3">
-                      {teamRowsForManager.map((person) => (
-                        <div key={person.id} className="rounded-2xl bg-stone-50 px-4 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-sm font-semibold text-stone-600">
-                              {person.initials}
-                            </div>
-                            <div>
-                              <p className="font-medium text-stone-950">{person.name}</p>
-                              <p className="mt-1 text-sm text-stone-500">
-                                Close {formatKpiValue(person.closeRatio, "percent")} · Avg {formatKpiValue(person.averageSale, "currency")}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </SummaryCard>
-
-                  <SummaryCard title="Team status">
-                    <div className="space-y-3">
-                      {teamStatus.map((installer) => (
-                        <div key={installer.id} className="rounded-2xl bg-stone-50 px-4 py-4">
-                          <p className="font-medium text-stone-950">{installer.name}</p>
-                          <p className="mt-1 text-sm text-stone-500">{installer.detail}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </SummaryCard>
-                </div>
-              </div>
-
-              <div className="grid gap-5 xl:grid-cols-2">
-                <SummaryCard title="Sales by week">
-                  <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={salesByWeek}>
-                        <XAxis dataKey="label" />
-                        <YAxis hide />
-                        <Tooltip formatter={formatCurrencyTooltip} />
-                        <Bar dataKey="value" fill="#FF4900" radius={[8, 8, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </SummaryCard>
-
-                <SummaryCard title="Lead sources">
-                  <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie data={leadSources} dataKey="leads" nameKey="source" innerRadius={60} outerRadius={90}>
-                          {leadSources.map((entry, index) => (
-                            <Cell key={entry.source} fill={PIE_COLORS[index % PIE_COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                </SummaryCard>
-              </div>
-            </>
-          ) : null}
-
-          {mode === "sales_rep" ? (
-            <>
-              <div className="grid gap-5 xl:grid-cols-3">
-                <SummaryCard title="My appointments today">
-                  <div className="space-y-3">
-                    {appointments.length > 0 ? (
-                      appointments.map((appointment) => (
-                        <div key={appointment.id} className="rounded-2xl bg-stone-50 px-4 py-4">
-                          <p className="font-medium text-stone-950">
-                            {appointment.slot} · {appointment.customerName}
-                          </p>
-                          <p className="mt-1 text-sm text-stone-500">{appointment.address}</p>
-                        </div>
-                      ))
-                    ) : (
-                      <EmptyState>No appointments scheduled for you today.</EmptyState>
-                    )}
-                  </div>
-                </SummaryCard>
-
-                <SummaryCard title="My open quotes">
-                  <div className="space-y-3">
-                    {quotes
-                      .filter((quote) => quote.status === "pending")
-                      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-                      .slice(0, 5)
-                      .map((quote) => (
-                        <div key={quote.id} className="rounded-2xl bg-stone-50 px-4 py-4">
-                          <p className="font-medium text-stone-950">{quote.customerName}</p>
-                          <p className="mt-1 text-sm text-stone-500">Created {formatDate(quote.createdAt)}</p>
-                        </div>
-                      ))}
-                  </div>
-                </SummaryCard>
-
-                <SummaryCard title="My recent sales">
-                  <div className="space-y-3">
-                    {appointments
-                      .filter((appointment) => appointment.sold)
-                      .slice(0, 5)
-                      .map((appointment) => (
-                        <div key={appointment.id} className="rounded-2xl bg-stone-50 px-4 py-4">
-                          <p className="font-medium text-stone-950">{appointment.customerName}</p>
-                          <p className="mt-1 text-sm text-stone-500">{appointment.slot}</p>
-                          <p className="mt-2 text-sm font-medium text-primary">
-                            {formatKpiValue(appointment.saleAmount, "currency")}
-                          </p>
-                        </div>
-                      ))}
-                  </div>
-                </SummaryCard>
-              </div>
-
-              <SummaryCard title="My goal progress">
-                <div className="h-4 rounded-full bg-stone-100">
-                  <div
-                    className="h-4 rounded-full bg-primary"
-                    style={{
-                      width: `${Math.min((safeNumber(metrics[3]?.value?.replace?.(/[^\d.-]/g, "") ?? 0) / Math.max(repGoalAmount, 1)) * 100, 100)}%`,
-                    }}
-                  />
-                </div>
-                <p className="mt-4 text-sm text-stone-600">
-                  You need {formatKpiValue(Math.max(repGoalAmount - (currentUser ? safeNumber(metrics[3]?.value?.replace?.(/[^\d.-]/g, "") ?? 0) : 0), 0), "currency")} more to hit your goal this month
-                </p>
-              </SummaryCard>
-            </>
-          ) : null}
-
-          {mode === "installer" ? (
-            <div className="grid gap-5 xl:grid-cols-3">
-              <SummaryCard title="Today's jobs">
-                <div className="space-y-3">
-                  {appointments.slice(0, 5).map((appointment) => (
-                    <div key={appointment.id} className="rounded-2xl bg-stone-50 px-4 py-4">
-                      <p className="font-medium text-stone-950">{appointment.customerName}</p>
-                      <p className="mt-1 text-sm text-stone-500">{appointment.address}</p>
-                      <p className="mt-1 text-xs text-stone-400">{appointment.slot}</p>
-                    </div>
-                  ))}
-                </div>
-              </SummaryCard>
-
-              <SummaryCard title="My stats this month">
-                <div className="space-y-4 text-sm text-stone-500">
-                  <p>
-                    Jobs completed: <span className="font-semibold text-stone-950">{installerStats.completed}</span>
-                  </p>
-                  <p>
-                    Average job time: <span className="font-semibold text-stone-950">{installerStats.averageHours.toFixed(1)}h</span>
-                  </p>
-                  <p>
-                    Labor hours: <span className="font-semibold text-stone-950">{installerStats.laborHours.toFixed(1)}h</span>
-                  </p>
-                </div>
-              </SummaryCard>
-
-              <SummaryCard title="My recent sign-offs">
-                <div className="space-y-3">
-                  {recentSignOffs.map((signOff) => (
-                    <div key={signOff.id} className="rounded-2xl bg-stone-50 px-4 py-4">
-                      <p className="font-medium text-stone-950">{signOff.customerName}</p>
-                      <p className="mt-1 text-sm text-stone-500">{formatDate(signOff.signedAt)}</p>
-                    </div>
-                  ))}
-                </div>
-              </SummaryCard>
-            </div>
-          ) : null}
-
-          {mode === "marketing_manager" ? (
-            <>
-              <div className="grid gap-5 xl:grid-cols-[1.1fr_1fr]">
-                <SummaryCard title="Lead source breakdown">
-                  <div className="h-72">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={leadSources}>
-                        <XAxis dataKey="source" hide />
-                        <YAxis hide />
-                        <Tooltip />
-                        <Bar dataKey="leads" fill="#FF4900" radius={[8, 8, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </SummaryCard>
-
-                <SummaryCard title="Revenue by source">
-                  <div className="h-72">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={leadSources}>
-                        <XAxis dataKey="source" hide />
-                        <YAxis hide />
-                        <Tooltip formatter={formatCurrencyTooltip} />
-                        <Bar dataKey="revenue" fill="#2DA44E" radius={[8, 8, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </SummaryCard>
-              </div>
-
-              <SummaryCard title="Campaign performance">
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-left text-sm">
-                    <thead className="text-stone-400">
-                      <tr>
-                        <th className="pb-3 font-medium">Source</th>
-                        <th className="pb-3 font-medium">Leads</th>
-                        <th className="pb-3 font-medium">Appointments</th>
-                        <th className="pb-3 font-medium">Sales</th>
-                        <th className="pb-3 font-medium">Revenue</th>
-                        <th className="pb-3 font-medium">Cost</th>
-                        <th className="pb-3 font-medium">CPL</th>
-                        <th className="pb-3 font-medium">ROI</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {leadSources.map((row) => (
-                        <tr key={row.source} className="border-t border-stone-100 text-stone-600">
-                          <td className="py-3 font-medium text-stone-950">{row.source}</td>
-                          <td className="py-3">{row.leads}</td>
-                          <td className="py-3">{row.appointments}</td>
-                          <td className="py-3">{row.sales}</td>
-                          <td className="py-3">{formatKpiValue(row.revenue, "currency")}</td>
-                          <td className="py-3">{formatKpiValue(row.cost, "currency")}</td>
-                          <td className="py-3">{formatKpiValue(row.cpl, "currency")}</td>
-                          <td className={`py-3 ${row.roi >= 0 ? "text-[#2DA44E]" : "text-[#A32D2D]"}`}>
-                            {(row.roi * 100).toFixed(1)}%
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </SummaryCard>
-            </>
-          ) : null}
-
-          {mode !== "installer" && mode !== "marketing_manager" && mode !== "sales_rep" ? (
-            <SummaryCard title="Financial snapshot">
-              <div className="grid gap-5 md:grid-cols-3">
-                <div className="rounded-2xl bg-stone-50 px-4 py-4">
-                  <p className="text-sm text-stone-500">Gross profit MTD</p>
-                  <p className="mt-2 text-2xl font-semibold text-stone-950">
-                    {formatKpiValue(grossProfitMtd, "currency")}
-                  </p>
-                </div>
-                <div className="rounded-2xl bg-stone-50 px-4 py-4">
-                  <p className="text-sm text-stone-500">Average gross margin</p>
-                  <p className="mt-2 text-2xl font-semibold text-stone-950">
-                    {formatKpiValue(avgGrossMargin, "percent")}
-                  </p>
-                </div>
-                <div className="rounded-2xl bg-stone-50 px-4 py-4">
-                  <p className="text-sm text-stone-500">Pipeline value</p>
-                  <p className="mt-2 text-2xl font-semibold text-stone-950">
-                    {formatKpiValue(pipelineValue, "currency")}
-                  </p>
-                </div>
-              </div>
-            </SummaryCard>
-          ) : null}
         </div>
       </section>
     </main>

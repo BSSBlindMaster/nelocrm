@@ -643,10 +643,14 @@ export async function getTeamKPIs(): Promise<TeamKpiRow[]> {
 export async function getPinnedKpis(userId: string) {
   const { data } = await supabase
     .from("user_dashboard_pins")
-    .select("id, kpi_key, position")
+    .select("id, kpi_key, position, size, col_span")
     .eq("user_id", userId)
     .order("position", { ascending: true });
-  return (data as Array<{ id: string; kpi_key: string; position: number }> | null) ?? [];
+  const rows =
+    (data as Array<{ id: string; kpi_key: string; position: number; size?: string | null; col_span?: number | null }> | null) ??
+    [];
+  const allowedKeys = new Set(kpiDefinitions.map((definition) => definition.key));
+  return rows.filter((row) => allowedKeys.has(row.kpi_key));
 }
 
 export function formatKpiValue(value: number, format: KpiDefinition["format"]) {
