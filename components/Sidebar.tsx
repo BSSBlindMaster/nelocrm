@@ -547,7 +547,10 @@ export function Sidebar({ current }: SidebarProps) {
       </div>
 
       {/* Nav — scrollable middle */}
-      <nav className="flex-1 overflow-y-auto px-5 pb-20" style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.15) transparent" }}>
+      <nav
+        className="min-h-0 flex-1 overflow-y-auto px-5 pb-20"
+        style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.15) transparent" }}
+      >
         <div className={`mt-6 ${isLoadingPermissions ? "animate-pulse" : ""}`}>
           {showWorkSection ? <Section title="Work" items={workItems} current={current} /> : null}
 

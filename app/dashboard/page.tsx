@@ -1164,17 +1164,46 @@ export default function DashboardPage() {
   }
 
   function renderOwnerDashboard() {
-    const widgets = ownerWidgets.length > 0 ? ownerWidgets : OWNER_DEFAULT_WIDGETS.map((widget) => ({
-      kpi_key: widgetKeyToDb(widget.key),
-      widgetKey: widget.key,
-      size: widget.size,
-      col_span: widgetSizeToSpan(widget.size),
-      position: widget.position,
-    }));
+    const widgets =
+      ownerWidgets.length > 0
+        ? ownerWidgets
+        : OWNER_DEFAULT_WIDGETS.map((widget) => ({
+            kpi_key: widgetKeyToDb(widget.key),
+            widgetKey: widget.key,
+            size: widget.size,
+            col_span: widgetSizeToSpan(widget.size),
+            position: widget.position,
+          }));
+
+    const requiredKeys: WidgetKey[] = [
+      "revenue_mtd",
+      "close_ratio",
+      "average_sale",
+      "nsli",
+    ];
+    const hydratedWidgets = [...widgets];
+
+    requiredKeys.forEach((requiredKey) => {
+      if (!hydratedWidgets.some((widget) => widget.widgetKey === requiredKey)) {
+        const fallback = OWNER_DEFAULT_WIDGETS.find((widget) => widget.key === requiredKey);
+        if (fallback) {
+          hydratedWidgets.push({
+            kpi_key: widgetKeyToDb(fallback.key),
+            widgetKey: fallback.key,
+            size: fallback.size,
+            col_span: widgetSizeToSpan(fallback.size),
+            position: fallback.position,
+          });
+        }
+      }
+    });
 
     return (
-      <div className="grid auto-rows-[220px] grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {widgets
+      <div
+        className="grid auto-rows-[220px] grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4 xl:[grid-template-columns:repeat(4,minmax(0,1fr))]"
+        style={{ gap: "16px" }}
+      >
+        {hydratedWidgets
           .sort((a, b) => a.position - b.position)
           .map((widget) => (
             <div
